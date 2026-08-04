@@ -501,18 +501,51 @@ git commit -m "hyundai: capture CCNC cluster messages in carstate"
 
 - [ ] **Step 1: Add the `ccnc_non_hda2` gate in carcontroller**
 
+> **Dependency:** `create_acc_control()` gains a trailing parameter in the CCNC branch. Confirm Task 4 ported that signature change before starting this step:
+> ```bash
+> grep -n 'def create_acc_control' opendbc/car/hyundai/hyundaicanfd.py
+> ```
+> It must accept the extra `cruise_info` argument. If it does not, go back and complete Task 4.
+
 In `create_canfd_msgs()`, alongside the existing `lka_steering` locals:
 
 ```python
+    lka_steering = self.CP.flags & HyundaiFlags.CANFD_LKA_STEER_MSG
+    lka_steering_long = lka_steering and self.CP.openpilotLongitudinalControl
     ccnc_non_hda2 = self.CP.flags & HyundaiFlags.CCNC and not lka_steering
 ```
 
-Then emit the CCNC messages under that gate. Take the exact call site from:
-```bash
-git diff cf3223a5 1c2d90df -- opendbc/car/hyundai/carcontroller.py
+Replace the LFA/HDA icon block:
+
+```python
+    # LFA and HDA icons
+    if self.frame % 5 == 0 and (not lka_steering or lka_steering_long):
+      if ccnc_non_hda2:
+        can_sends.extend(hyundaicanfd.create_ccnc(self.packer, self.CAN, self.CP.openpilotLongitudinalControl, CC.enabled, CC.hudControl, CC.leftBlinker,
+                                                  CC.rightBlinker, CS.msg_161, CS.msg_162, CS.msg_1b5, CS.is_metric, CS.out, CS.main_cruise_enabled,
+                                                  self.lfa_icon))
+      else:
+        can_sends.append(hyundaicanfd.create_lfahda_cluster(self.packer, self.CAN, CC.enabled, self.lfa_icon))
+```
+
+And the longitudinal block:
+
+```python
+    if self.CP.openpilotLongitudinalControl:
+      if lka_steering:
+        can_sends.extend(hyundaicanfd.create_adrv_messages(self.packer, self.CAN, self.frame))
+      elif not ccnc_non_hda2:
+        can_sends.extend(hyundaicanfd.create_fca_warning_light(self.packer, self.CAN, self.frame))
+      if self.frame % 2 == 0:
+        can_sends.append(hyundaicanfd.create_acc_control(self.packer, self.CAN, CC.enabled, self.accel_last, accel, stopping, CC.cruiseControl.override,
+                                                         set_speed_in_units, hud_control, self.lead_data, CS.main_cruise_enabled, self.tuning,
+                                                         CS.cruise_info if ccnc_non_hda2 else None))
+        self.accel_last = accel
 ```
 
 **`and not lka_steering` is the safety property.** It makes CCNC transmission structurally impossible on an HDA2 car.
+
+Note the whole `openpilotLongitudinalControl` block is dead code for both our vehicles (neither has openpilot longitudinal), but it must be ported consistently so the signatures line up.
 
 - [ ] **Step 2: Set the safety param in interface.py**
 
@@ -1102,6 +1135,13 @@ Swap loop: <both directions>
 ICBM toggle state on Sorento: <on|off>"
 git push mine lx3-unified
 ```
+
+---
+
+## Spec items requiring no task
+
+- **Spec change F — drop the `calibrationd.py` / `locationd.py` workarounds.** No task needed. This plan builds *forward* from `hkg-angle-steering-2025` rather than rebasing kamdeva's branch, so those two workarounds are never introduced in the first place. Nothing to remove. If `commIssue` alerts appear during Task 13 validation, revisit Task 10 (`NUM_READERS`) first — the workarounds were symptomatic patches for that root cause.
+- **Spec change C — carstate missing-message guards.** kamdeva's README describes pre-registering parser messages and guarding absent fields (`DOORS_SEATBELTS`, `BLINKERS`, `ADAS_CMD`, `HOD_FD`). That work was **reverted** in their tree by `d4f06c60`. The only carstate change surviving to their tip is the LX3 `CRUISE_BUTTONS` frequency-check skip, which Task 8 Step 6 covers. If the Palisade throws parser errors during Task 13, revisit `cdbc9493` — but do not port it preemptively.
 
 ---
 

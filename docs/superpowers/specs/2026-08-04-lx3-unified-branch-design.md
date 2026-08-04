@@ -92,7 +92,7 @@ it is not load-bearing for any code.
 | Platform | `KIA_SORENTO_HEV_4TH_GEN_LFA2` | `HYUNDAI_PALISADE_HEV_LX3` |
 | Architecture | HDA2 (`lka_steering=True`) | HDA1 (`lka_steering=False`) |
 | Flags | `CANFD_ANGLE_STEERING` | `CANFD_ANGLE_STEERING \| CCNC` |
-| Harness | `hyundai_q` | `hyundai_l` |
+| Harness | `hyundai_q` | `hyundai_n` (see note) |
 | Specs | mass 1970, wb 2.814, sr 13.27 | mass 2175, wb 2.97, sr 13.72 |
 | Status | Working, upstream | Ported in third-party fork only |
 | Lateral | Working | Working (per fork author, on-vehicle) |
@@ -107,6 +107,16 @@ about future work:
 - **Palisade:** unimplemented. `SCC_CONTROL` bytes 24-25 do not match the camera's format and have
   not been reverse-engineered. Enabling Alpha Longitudinal reportedly **silences the cruise
   buttons**.
+
+> **Harness note.** kamdeva's port declares `CarHarness.hyundai_l`. The actual harness on our
+> vehicle is **`hyundai_n`**, confirmed by the owner. We use `hyundai_n`. This is documentation
+> metadata (`car_parts`) and does not affect CAN routing at runtime, so the discrepancy does not
+> invalidate the fork's on-vehicle results — but our platform entry must reflect the hardware we
+> actually run, and `hyundai_n` is consistent with other newer non-HDA2 Hyundais
+> (`HYUNDAI_TUCSON_2025`, `HYUNDAI_TUCSON_HEV_2025`).
+
+> **Fingerprint note.** The owner has previously run kamdeva's branch on this vehicle and it
+> fingerprinted correctly. We adopt the fork's FW fingerprint block as-is rather than recapturing.
 
 ---
 
@@ -170,10 +180,33 @@ diff. All three teach Intelligent Cruise Button Management to operate when only 
 | `sunnypilot/.../longitudinal_planner.py` | `long_enabled` true on `latActive and cruiseState.enabled` |
 | `sunnypilot/.../icbm/controller.py` | ICBM `ready` becomes `CC.enabled or CC.latActive` |
 
-Because **both** cars run lateral-only, these are candidates to adopt for both rather than gate
-away. They are, however, a real behavior change to a car that currently works — ICBM would begin
-modulating set-speed via cruise buttons under lateral-only MADS on the Sorento. Adopt deliberately,
-verify on-vehicle, and keep them revertible independently of the LX3 port.
+**Decision: adopt all three ungated.** They are unreachable on the Sorento while the
+**Intelligent Cruise Button Management** toggle is off, which is its current state.
+
+`CP_SP.pcmCruiseSpeed` is set `False` in exactly one place, and only on explicit opt-in:
+
+```python
+# openpilot/sunnypilot/selfdrive/car/interfaces.py
+icbm_enabled = params.get_bool("IntelligentCruiseButtonManagement")
+if icbm_enabled and CP_SP.intelligentCruiseButtonManagementAvailable and not CP.openpilotLongitudinalControl:
+    CP_SP.pcmCruiseSpeed = False
+```
+
+With the toggle off, `pcmCruiseSpeed` remains `True` and each change collapses to nothing:
+
+| Change | Why inert |
+|---|---|
+| `icbm/controller.py` | `update_readiness()` is only called from `run()`, which early-returns on `if self.CP_SP.pcmCruiseSpeed: return`. **Unreachable code.** |
+| `controlsd.py` | The added conjunct is `True`, so the expression is unchanged. **Literal no-op.** |
+| `longitudinal_planner.py` | `long_enabled` feeds `scc.update()` and `sla.update()`. In this exact configuration (`not openpilotLongitudinalControl and pcmCruiseSpeed`), `_cleanup_unsupported_params` force-removes `SmartCruiseControlVision`, `SmartCruiseControlMap`, and `DynamicExperimentalControl`. Nothing actuates the longitudinal plan. |
+
+Gating them to LX3 would add conditionals guarding code that cannot execute, and would leave the
+Sorento running the *broken* variant if ICBM were ever enabled on it later — since both cars are
+lateral-only, these changes are the correct behavior for both. Keep them in an isolated commit so
+they remain revertible independently of the LX3 port.
+
+**Precondition:** confirm ICBM is off on the Sorento. If it is on, this analysis does not hold and
+the changes must be evaluated on-vehicle before adoption.
 
 **F. Drop the locationd/calibrationd workarounds.** `calibrationd.py` (`valid=True`) and
 `locationd.py` (`all_alive()` vs `all_checks()`) are described by the fork author as superseded by
@@ -186,7 +219,7 @@ the `NUM_READERS` fix and "kept for redundancy". Drop them; re-add only if a fai
 | Risk | Severity | Mitigation |
 |---|---|---|
 | `0x105` counter relaxation reaches the Sorento | **High** — weakens a panda safety check on a working car | Gate to LX3 platform; assert in tests that the Sorento's safety param is unchanged |
-| ICBM changes alter Sorento cruise behavior | Medium | Adopt deliberately, isolate in its own commit, verify on-vehicle, keep revertible |
+| ICBM changes alter Sorento cruise behavior | **Low** — traced unreachable while the ICBM toggle is off | Confirm toggle is off; isolate in its own commit; re-evaluate on-vehicle if ever enabled |
 | Learned params carry between cars on one device | Medium — one car running the other's `steerRatio`/calibration | Documented swap procedure (below) |
 | 743-commit forward port | Medium — the port is small but the base moved a lot | Re-apply patches onto current tip by hand; do not rebase the fork branch wholesale |
 | Repo restructured since fork point | Medium — every fork patch path is stale | The tree moved under `openpilot/` (e.g. `selfdrive/controls/controlsd.py` → `openpilot/selfdrive/controls/controlsd.py`). A wholesale rebase would conflict on every file; hand re-application is required, not optional |
@@ -265,14 +298,22 @@ Staged so that **the Sorento is never the test bed**.
 
 ---
 
+## Resolved decisions
+
+1. **Harness** — `hyundai_n`, confirmed against the physical vehicle. Overrides the fork's
+   `hyundai_l`. See harness note above.
+2. **Fingerprint** — adopt the fork's FW fingerprint block. The vehicle has previously fingerprinted
+   correctly on that branch.
+3. **ICBM** — adopt all three changes ungated, in an isolated commit. Traced unreachable while the
+   ICBM toggle is off. See section E.
+
 ## Open questions
 
-1. **Harness confirmation.** The fork specifies `CarHarness.hyundai_l` for LX3. Confirm against the
-   physical harness before driving.
-2. **Fingerprint match.** Confirm the Palisade's FW versions match the fork's fingerprint block, or
-   capture fresh ones from the vehicle.
-3. **ICBM adoption.** Adopt for both cars, or gate to the Palisade? Recommendation: adopt for both,
-   in an isolated commit, and evaluate on the Sorento at step 3 of validation.
+1. **Is ICBM currently off on the Sorento?** The entire section-E analysis depends on it. If it is
+   on, those three changes must be evaluated on-vehicle before adoption.
+2. **Does ICBM get enabled after this lands?** Out of scope for v1, but it is the main functional
+   upside available to both cars — curve and speed-limit slowdown via cruise-button modulation,
+   without openpilot longitudinal. If pursued, test on the Palisade first, not the Sorento.
 
 ---
 

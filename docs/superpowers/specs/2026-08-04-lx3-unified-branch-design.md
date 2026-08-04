@@ -224,6 +224,35 @@ unified branch lands.
 **First action when revisited:** confirm the toggle's actual state rather than assuming. If it
 turns out to be off, the analysis below applies unchanged and the changes are safe to adopt.
 
+#### Known defect these changes expose: ICBM set-speed oscillation
+
+The owner ran kamdeva's branch on the Palisade and reported that **engaging lane centering made the
+stock cruise control hunt** — the car revved slightly up and down. Root cause traced in source:
+
+1. ICBM on → `pcmCruiseSpeed = False`, so `_cleanup_unsupported_params` leaves
+   `SmartCruiseControlVision`/`Map` enabled.
+2. `ready = CC.enabled or CC.latActive` → ICBM activates the moment lateral engages.
+3. `long_enabled` widened → `scc.update()` runs and produces `LP_SP.vTarget`.
+4. **`HYST_GAP = 0.0`**, and `apply_hysteresis(val, steady, 0)` reduces to `return val` — a pure
+   pass-through with zero damping.
+5. `v_target = round(...)` and `v_cruise_equal = v_target == v_cruise_cluster` — the state machine
+   keys entirely off rounded integers.
+6. A `vTarget` hovering near an X.5 boundary rounds alternately to X and X+1, cycling
+   `holding → preActive → increasing/decreasing → holding` and emitting SET+/SET− presses. Each
+   press moves the stock ACC setpoint 1 mph; on a hybrid this is audible as engine hunting.
+
+The source comment concedes the gap: `# currently disabled; TODO-SP: might need to be brand-specific`.
+ICBM was never reachable in lateral-only mode before these changes, so the combination was untested.
+
+**Confirming test (single variable):** turn the ICBM toggle off, reboot, drive with lane centering.
+Symptom gone confirms the diagnosis; symptom persisting points instead at `create_ccnc()`.
+
+**Corollary:** ICBM was demonstrably active on the Palisade, which means `CANFD_ALT_BUTTONS` is
+**not** set on that vehicle. This resolves the availability question in the table below.
+
+**Fix when revisited:** do not revert kamdeva's three changes — they are correct. Give `HYST_GAP` a
+non-zero brand-specific value so the target stops dithering across the rounding boundary.
+
 ---
 
 *Retained for reference — the analysis that applies only if ICBM is off:*
@@ -273,7 +302,7 @@ ret.intelligentCruiseButtonManagementAvailable = not (stock_cp.flags & HyundaiFl
 | Car | ICBM available? | Why |
 |---|---|---|
 | Sorento (HDA2) | **Yes — confirmed** | `lka_steering=True`, so the `else:` branch that sets `CANFD_ALT_BUTTONS` is never reached, and the platform does not declare it |
-| Palisade (HDA1) | **Undetermined** | Set at runtime if `0x1cf` is absent from ECAN. kamdeva added `CANFD_ALT_BUTTONS` to the LX3 platform (`f75dc291`) then reverted it by their tip (`d4f06c60`) |
+| Palisade (HDA1) | **Yes — inferred from observed behavior** | ICBM was demonstrably active on this vehicle (it caused the oscillation above), so `CANFD_ALT_BUTTONS` is not set. Consistent with kamdeva adding that flag in `f75dc291` and reverting it by their tip (`d4f06c60`) |
 
 **Consequence for validation:** the intuitive plan — try ICBM on the Palisade first to keep the
 Sorento untouched — may not be available. If ICBM is unavailable on the Palisade, the Sorento is

@@ -1094,6 +1094,24 @@ This is the rollback target. Record how to return to it: reflash from `install.s
 
 Before flashing, check sunnypilot settings on the device and record whether **Intelligent Cruise Button Management** is on or off. This does not gate v1 (the ICBM changes are excluded), but it determines whether they can be adopted later.
 
+- [ ] **Step 2b: Run the ICBM oscillation confirming test on the OLD branch**
+
+Do this **before** flashing `lx3-unified`, while kamdeva's branch is still installed — it is the only chance to confirm the diagnosis on the branch that exhibits the bug.
+
+The owner observed that engaging lane centering made the Palisade's stock cruise hunt (slight engine revving). Root cause is traced in the spec: ICBM oscillating because `HYST_GAP = 0.0` provides zero damping, combined with kamdeva's changes making ICBM reachable in lateral-only mode.
+
+Procedure — one variable:
+
+1. In sunnypilot settings, turn **Intelligent Cruise Button Management** OFF
+2. Reboot the device
+3. Drive with lane centering engaged and stock ACC on
+
+Record the result:
+- **Symptom gone** → diagnosis confirmed. `pcmCruiseSpeed` returns to `True` and ICBM's `run()` early-returns.
+- **Symptom persists** → not ICBM. Investigate `create_ccnc()` interaction with the ACC before trusting Task 4's port.
+
+**If the symptom persists, stop and re-open Task 4 review** — it would mean the CCNC message port carries a defect that v1 would inherit.
+
 - [ ] **Step 3: Flash the Sorento and verify no change**
 
 Install `lx3-unified` on the device, put it in the Sorento, and confirm:

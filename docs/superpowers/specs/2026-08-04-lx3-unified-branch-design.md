@@ -311,10 +311,76 @@ Staged so that **the Sorento is never the test bed**.
 - **Palisade longitudinal control.** Requires reverse-engineering `SCC_CONTROL` bytes 24-25.
   Separate project, after this lands. Use stock ACC.
 - **Sorento longitudinal.** Deliberately disabled upstream for `lka_steering` angle-steering cars.
+  Scoped as a follow-up project below.
 - **Merging royjr's CCNC branch wholesale.** We take the minimal subset only.
 - **Upstreaming the LX3 port.** Possible follow-up once validated; not a goal for v1.
 
 ---
+
+## Follow-up project: longitudinal control on the Sorento
+
+**Not part of v1.** Scoped here so the investigation order is recorded. Sequence third: after the
+unified branch lands and the Palisade steers.
+
+### Current state
+
+Longitudinal is blocked by two independent gates in `opendbc/car/hyundai/interface.py`:
+
+```python
+# Gate A
+if lka_steering and Ecu.adas not in [fw.ecu for fw in car_fw]:
+    ret.alphaLongitudinalAvailable = False
+
+# Gate B
+# no longitudinal for all lka_steering angle steering
+if lka_steering and ret.flags & HyundaiFlags.CANFD_ANGLE_STEERING:
+    ret.alphaLongitudinalAvailable = False
+```
+
+**Gate A is probably not a blocker.** `car_fw` is the live FW query result, not `fingerprints.py`.
+`Ecu.adas` (0x730) sits in `FW_QUERY_CONFIG.extra_ecus`, so it is queried at runtime but excluded
+from the FW-matching database — which is why *no* Hyundai platform lists it in `fingerprints.py`,
+including cars where HDA2 longitudinal works. Since the Sorento is `lka_steering=True`, an ADAS ECU
+exists in the camera → ADAS → MDPS chain by definition and should respond.
+
+**Gate B is the real blocker.** Added by Jason Wen, 2025-10-14, commit `143f9203`, whose message is
+in full: *"gate lka angle steering out of alpha long."* No rationale is recorded. Whether this
+guards a known failure mode or is precautionary pending validation cannot be determined from the
+code.
+
+### What already exists
+
+The implementation is built and merely gated off:
+
+| Component | Location |
+|---|---|
+| Panda TX allowlist incl. `0x730` tester-present | `HYUNDAI_CANFD_LKA_STEER_MSG_LONG_TX_MSGS` |
+| ADAS ECU impersonation (`ADRV_0x51/0x160/0x1EA/0x200/0x345/0x1DA`) | `create_adrv_messages()` |
+| SCC command | `create_acc_control()` |
+| Angle-steering safety limits | `HYUNDAI_CANFD_ANGLE_STEERING_LIMITS` |
+
+### Required work, in order
+
+1. **Confirm `Ecu.adas` in `car_fw`.** Inspect a route or query on the device. Cheap; resolves
+   Gate A.
+2. **Establish why `143f9203` exists.** Ask Jason Wen or the sunnypilot community. **This is the
+   decisive step and it gates everything after it.** If angle steering plus longitudinal produced a
+   real failure, the project stops here. Do this before any code work — it costs a forum post and
+   may save the entire effort.
+3. If precautionary: narrow Gate B to exclude this validated platform rather than removing it
+   wholesale.
+4. Validate `SCC_CONTROL` output against what the stock camera transmits.
+5. Run panda safety tests; add coverage for angle steering combined with longitudinal.
+6. Staged on-road validation with an immediate rollback path.
+
+### Risk
+
+Materially higher than anything in v1. Lateral misbehavior yields bad steering that the driver
+overrides at the wheel; longitudinal misbehavior means openpilot commanding acceleration and
+braking. The work targets the only vehicle currently functioning correctly, via a code path a
+maintainer deliberately disabled without recording why.
+
+Do not begin before step 2 is answered.
 
 ## Prerequisites
 

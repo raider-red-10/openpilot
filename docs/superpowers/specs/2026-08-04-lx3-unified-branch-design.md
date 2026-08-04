@@ -154,7 +154,11 @@ construction, not merely by our own added conditionals.
 royjr's `dba9b53d`. It is not required for the Palisade and carries the blast radius that stalled
 the original branch.
 
-**C. LX3 hardware quirks.** Two real deviations from the generic HDA1 path:
+**C. LX3 hardware quirks.** The fork's README describes "5 patches"; the actual opendbc side is
+**8 LX3-specific commits**, including `revert HYBRID flag (bisect)` and `revert to drive 9
+baseline`. That port went through real on-vehicle debugging, so part of the work is deciding which
+commits represent final intent versus abandoned experiments — take the resolved end state, not the
+commit sequence. Known deviations from the generic HDA1 path:
 
 1. **`0x105` counter.** LX3 increments the `ACCELERATOR_ALT` counter by 2 per frame; panda's
    standard check rejects it. Fork sets `max_counter=0, ignore_counter=true`.
@@ -207,6 +211,33 @@ they remain revertible independently of the LX3 port.
 
 **Precondition:** confirm ICBM is off on the Sorento. If it is on, this analysis does not hold and
 the changes must be evaluated on-vehicle before adoption.
+
+### What ICBM does, and which car can actually use it
+
+ICBM is sunnypilot's substitute for longitudinal control: it taps the stock cruise SET+/SET−
+buttons to modulate the car's own ACC set speed. The planner takes the slowest of several
+candidate targets (`cruise`, `sccVision`, `sccMap`, `speedLimitAssist`), so with ICBM on,
+openpilot slows for upcoming curves and posted speed limits without ever commanding acceleration.
+
+The three changes above are what make this work at all on a lateral-only car — without them
+`CC.enabled` is `False` and ICBM never activates.
+
+Availability is per-car:
+
+```python
+# opendbc/car/hyundai/interface.py
+ret.intelligentCruiseButtonManagementAvailable = not (stock_cp.flags & HyundaiFlags.CANFD_ALT_BUTTONS)
+```
+
+| Car | ICBM available? | Why |
+|---|---|---|
+| Sorento (HDA2) | **Yes — confirmed** | `lka_steering=True`, so the `else:` branch that sets `CANFD_ALT_BUTTONS` is never reached, and the platform does not declare it |
+| Palisade (HDA1) | **Undetermined** | Set at runtime if `0x1cf` is absent from ECAN. kamdeva added `CANFD_ALT_BUTTONS` to the LX3 platform (`f75dc291`) then reverted it by their tip (`d4f06c60`) |
+
+**Consequence for validation:** the intuitive plan — try ICBM on the Palisade first to keep the
+Sorento untouched — may not be available. If ICBM is unavailable on the Palisade, the Sorento is
+the only car that can exercise the feature. Determine Palisade availability on-vehicle before
+planning any ICBM testing.
 
 **F. Drop the locationd/calibrationd workarounds.** `calibrationd.py` (`valid=True`) and
 `locationd.py` (`all_alive()` vs `all_checks()`) are described by the fork author as superseded by

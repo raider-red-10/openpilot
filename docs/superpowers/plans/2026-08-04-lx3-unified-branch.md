@@ -54,7 +54,7 @@
 
 | File | Change |
 |---|---|
-| `msgq_repo` submodule | `NUM_READERS` 15 → 64 (only if still needed) |
+| `msgq_repo` submodule | unchanged — Task 10 verified the bump is unnecessary |
 | `opendbc_repo` submodule | Point at our fork's `lx3-unified` |
 | `tools/lx3/swap_car.py` | **new** — clears per-vehicle params on device swap |
 
@@ -925,62 +925,37 @@ git push mine lx3-unified
 
 ---
 
-## Task 10: `msgq` `NUM_READERS` — evaluate, then apply only if needed
+## Task 10: `msgq` `NUM_READERS` — VERIFIED UNNECESSARY, no changes
 
-**Files:**
-- Possibly modify: `msgq_repo` submodule pointer
+**Status: complete, zero changes. No msgq fork required.**
 
-**Interfaces:**
-- Produces: either a bumped `msgq_repo` pointer, or a recorded decision not to.
+kamdeva's README justifies bumping `NUM_READERS` 15 -> 64 because "sunnypilot has 36+
+subscribers per high-frequency service and the upstream limit of 15 caused subscribers beyond
+the cap to receive stale data." That reasoning does not hold on the current tip.
 
-- [ ] **Step 1: Check the current value on the base**
+**Measured:**
 
-```bash
-cd ~/sunnypilot
-git submodule update --init --depth=1 msgq_repo
-grep -rn 'NUM_READERS' msgq_repo/msgq/msgq.h
-```
+| | |
+|---|---|
+| `NUM_READERS` in `msgq_repo/msgq/msgq.h` on the base | **25** — already raised since kamdeva's April fork point |
+| Reader sites for the busiest service (`carState`) | **18** |
+| Of those, dev tools that do not run concurrently on-device | 5 (`joystickd`, `lateral_maneuversd`, `maneuversd`, `tools/replay/ui`, `mapd/live_map_data/debug`) |
+| Realistic on-device peak | ~13 |
+| Direct `sub_sock("carState")` call sites | 1 |
+| C++ `SubMaster` sites including `carState` | 0 |
 
-Expected: a `#define NUM_READERS` line — record the value.
+18 worst-case against a cap of 25, and ~13 in the configuration that actually runs on the
+device. The condition kamdeva hit does not exist here.
 
-- [ ] **Step 2: Count actual subscribers on the busiest service**
+**Why not bump anyway as insurance.** `NUM_READERS` sizes three arrays in the shared-memory
+queue header (`read_pointers`, `read_valids`, `read_uids`), so raising it to 64 grows every
+queue's header for no measured benefit, and it would mean forking and maintaining `msgq` —
+a third submodule fork — to change a constant that already has 38% headroom.
 
-kamdeva's rationale was that sunnypilot has 36+ subscribers on `carState` at 95 Hz against a cap of 15. Verify that still holds on the current tip:
-
-```bash
-cd ~/sunnypilot
-grep -rn "'carState'" --include='*.py' openpilot/ | grep -c 'SubMaster\|sub_sock'
-```
-
-- [ ] **Step 3: Decide and record**
-
-- If `NUM_READERS` is already ≥ 64 on the current tip: **no change needed.** Record that in the commit message for Task 11 and skip Steps 4-5.
-- If it is still 15 and the subscriber count exceeds it: bump it.
-
-- [ ] **Step 4: If bumping — fork msgq and change it**
-
-```bash
-gh repo fork sunnypilot/msgq --remote=false --clone=false
-cd ~/sunnypilot/msgq_repo
-git remote add mine https://github.com/raider-red-10/msgq.git
-git checkout -b lx3-unified
-sed -i '' 's/#define NUM_READERS 15/#define NUM_READERS 64/' msgq/msgq.h
-grep -n 'NUM_READERS' msgq/msgq.h
-git add msgq/msgq.h
-git commit -m "msgq: raise NUM_READERS 15 -> 64
-
-sunnypilot runs 36+ subscribers on high-frequency services; subscribers
-past the cap receive stale data and fail sm.all_checks()."
-git push mine lx3-unified
-```
-
-- [ ] **Step 5: Verify**
-
-```bash
-grep -n 'NUM_READERS' ~/sunnypilot/msgq_repo/msgq/msgq.h
-```
-
-Expected: `64`.
+**Revisit trigger.** If `commIssue` alerts appear during Task 13 on-vehicle validation, come
+back here first. That is the exact symptom the cap produces, and it is also what kamdeva's
+`calibrationd`/`locationd` workarounds were papering over. Re-measure before changing anything:
+the count above is reproducible with a `SubMaster` scan over `openpilot/`.
 
 ---
 
@@ -1002,16 +977,10 @@ cd opendbc_repo && git rev-parse HEAD
 
 Expected: the HEAD of the branch built in Tasks 2-9.
 
-- [ ] **Step 2: If Task 10 bumped msgq, point it at our fork too**
+- [ ] **Step 2: msgq — nothing to do**
 
-```bash
-cd ~/sunnypilot
-git config -f .gitmodules submodule.msgq.url https://github.com/raider-red-10/msgq.git
-git config -f .gitmodules submodule.msgq.branch lx3-unified
-git submodule sync msgq_repo
-```
-
-Skip if Task 10 Step 3 decided no change was needed.
+Task 10 verified no bump is needed (`NUM_READERS` is already 25 against a worst case of 18).
+`msgq_repo` stays pointed at `sunnypilot/msgq` at the base commit. No fork, no submodule change.
 
 - [ ] **Step 3: Full build**
 

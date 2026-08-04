@@ -53,9 +53,24 @@ That single detection drives five downstream differences, all already implemente
 | Auto-set flags | — | `CANFD_ALT_BUTTONS`, `CANFD_CAMERA_SCC` |
 | Panda TX allowlist | `HYUNDAI_CANFD_LKA_STEER_MSG_TX_MSGS` | LFA-steering TX set |
 
-**Implication:** HDA1 support does not need to be written. It exists, it is mature, and other HDA1
-cars run on it in production. The Palisade needs to be *recognized*, after which it flows down the
-existing HDA1 path.
+**Implication — with a critical exception.** The HDA1 *dispatch* is mature and needs no work. But
+the existing HDA1 path is **torque**-steering: it sends `LFA` (0x12A). An HDA1 car with **angle**
+steering needs a different message entirely — `LFA_ALT` (0xCB) — and that does not exist in the
+base branch:
+
+| Check against `hkg-angle-steering-2025` | Result |
+|---|---|
+| `LFA_ALT` / `0xCB` in `safety/modes/hyundai_canfd.h` | **0 occurrences** |
+| `LFA_ALT` in `car/hyundai/hyundaicanfd.py` | **0 occurrences** |
+| `CANFD_ANGLE_STEERING` platforms that are non-HDA2 | **0 of 10** — all HDA2-only |
+| Non-HDA2 platforms in the branch | 6, all torque-steering |
+
+So the branch supports HDA1 cars, and it supports angle-steering cars, but **not the combination**.
+The Palisade is the first HDA1 + LFA2 car on this branch. `LFA_ALT` is new code, available only in
+royjr's CCNC branch and kamdeva's fork.
+
+This makes the CCNC/`LFA_ALT` port the **core** of the project rather than a supporting detail, and
+it is why the port cannot be reduced to "add a platform entry and a fingerprint."
 
 ### 3. The `-hda1` branch is misnamed and is not about HDA1
 
@@ -134,12 +149,16 @@ Every LX3-specific change is gated so it cannot execute on an `lka_steering` car
 harness above, plus its FW fingerprint block in `fingerprints.py`, `car_list.json` entry, and
 `torque_data` entries.
 
-**B. Minimal CCNC subset.** The LX3 platform requires `HyundaiFlags.CCNC` because openpilot must
-transmit the cluster messages that the ADAS ECU sends on HDA2 cars. Port only:
+**B. CCNC and `LFA_ALT`.** This is the core of the port, not a minor addition — it supplies both
+the HDA1 angle-steering control path (`LFA_ALT`, 0xCB) and the digital-cluster messages openpilot
+must transmit in place of an ADAS ECU. Roughly **400 lines across 9 files**. Port:
 
 | Location | Change |
 |---|---|
-| `values.py` | `HyundaiFlags.CCNC = 2**28`, `HyundaiSafetyFlags.CCNC = 2048` |
+| `values.py` | `HyundaiFlags.CCNC = 2**28`, `HyundaiSafetyFlags.CCNC = 2048`, `ActvACISta` / `ESA_ActvSta` enums |
+| `hyundaicanfd.py` | **`LFA_ALT` (0xCB) steering path** — the HDA1 angle-steering control message |
+| `hyundai_canfd.dbc` | `LFA_ALT` message + signal definitions |
+| `safety/modes/hyundai_canfd.h` | **`0xCB` angle-command validation** (`steer_angle_cmd_checks_vm`) |
 | `carstate.py` | copy `CCNC_0x161`, `CCNC_0x162`, `FR_CMR_03_50ms` from cam bus |
 | `hyundaicanfd.py` | build `CCNC_0x161` / `CCNC_0x162` on ECAN |
 | `carcontroller.py` | `ccnc_non_hda2 = CCNC and not lka_steering` gate |
@@ -271,7 +290,8 @@ the `NUM_READERS` fix and "kept for redundancy". Drop them; re-add only if a fai
 
 | Risk | Severity | Mitigation |
 |---|---|---|
-| `0x105` counter relaxation reaches the Sorento | **High** — weakens a panda safety check on a working car | Gate to LX3 platform; assert in tests that the Sorento's safety param is unchanged |
+| Palisade is the first HDA1 + angle-steering car on this branch | **High** — `LFA_ALT` has no prior users here; the steering control path itself is new code | Port `LFA_ALT` verbatim from source including its panda angle checks; the `CANFD_LKA_STEER_MSG` branch is evaluated first so HDA2 can never reach it |
+| `0x105` counter relaxation reaches the Sorento | **Resolved — not applicable** | The change was reverted in kamdeva's tree and is absent from the final state. Verified: zero `ignore_counter` occurrences. Do not port it |
 | ICBM changes alter Sorento cruise behavior | **High if merged** — ICBM is believed ON, so all three are live on the working car | **Excluded from v1.** Port to a branch, validate on-vehicle as a separate change |
 | Learned params carry between cars on one device | Medium — one car running the other's `steerRatio`/calibration | Documented swap procedure (below) |
 | 743-commit forward port | Medium — the port is small but the base moved a lot | Re-apply patches onto current tip by hand; do not rebase the fork branch wholesale |

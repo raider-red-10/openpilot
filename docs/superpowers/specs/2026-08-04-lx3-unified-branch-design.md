@@ -224,10 +224,28 @@ unified branch lands.
 **First action when revisited:** confirm the toggle's actual state rather than assuming. If it
 turns out to be off, the analysis below applies unchanged and the changes are safe to adopt.
 
-#### Known defect these changes expose: ICBM set-speed oscillation
+#### Open investigation: cruise hunting on lateral engagement (UNRESOLVED)
 
 The owner ran kamdeva's branch on the Palisade and reported that **engaging lane centering made the
-stock cruise control hunt** — the car revved slightly up and down. Root cause traced in source:
+stock cruise control hunt** — the car revved slightly up and down.
+
+**Status: root cause not established.** Two hypotheses were formed; one is eliminated, one is
+unconfirmed. Recorded here so the investigation is not restarted from zero.
+
+| Hypothesis | Status |
+|---|---|
+| **A — ICBM set-speed oscillation** | **Unconfirmed.** Mechanism fully verified in source (below), but it can only fire if the ICBM toggle was ON. The owner is unsure of its state at the time. |
+| **B — `create_ccnc()` writing cruise signals** | **Eliminated.** All of `SETSPEED`, `SETSPEED_HUD`, `SETSPEED_SPEED`, `DISTANCE*`, `TARGET`, `LEAD*` sit inside `if openpilotLongitudinalControl:` in `create_ccnc()`. That is False on both vehicles, so the block never executes. On a lateral-only car `create_ccnc()` touches only fault flags, alerts/sounds, lane-line rendering, and icons. |
+
+**Consequence for v1:** eliminating B means the CCNC port does **not** carry this defect. v1 is
+unaffected either way, since the ICBM changes are already excluded.
+
+**Decisive next step:** a drive log from a route where the symptom occurred. It contains the actual
+CAN traffic and would show what openpilot transmitted at engagement and whether button-press
+messages went out. Elimination-by-code-reading has already produced one wrong hypothesis; do not
+form a third without data.
+
+##### Hypothesis A mechanism (verified in source, trigger unconfirmed)
 
 1. ICBM on → `pcmCruiseSpeed = False`, so `_cleanup_unsupported_params` leaves
    `SmartCruiseControlVision`/`Map` enabled.
@@ -244,14 +262,19 @@ stock cruise control hunt** — the car revved slightly up and down. Root cause 
 The source comment concedes the gap: `# currently disabled; TODO-SP: might need to be brand-specific`.
 ICBM was never reachable in lateral-only mode before these changes, so the combination was untested.
 
-**Confirming test (single variable):** turn the ICBM toggle off, reboot, drive with lane centering.
-Symptom gone confirms the diagnosis; symptom persisting points instead at `create_ccnc()`.
+**`HYST_GAP = 0.0` is a real upstream defect regardless of whether it caused this symptom.**
+`apply_hysteresis(val, steady, 0)` reduces to `return val` — verified — so ICBM's target has zero
+damping and the state machine keys off `round()`. Any target sitting near an X.5 boundary will
+dither. Log it; fix it in the ICBM follow-up with an on-vehicle tuned value.
 
-**Corollary:** ICBM was demonstrably active on the Palisade, which means `CANFD_ALT_BUTTONS` is
-**not** set on that vehicle. This resolves the availability question in the table below.
+**Deliberately not fixed now:** it would not address the reported symptom (unconfirmed trigger), it
+would change behavior on the working Sorento where ICBM is believed on, the correct value is
+empirical and would be a guess, and it forks upstream code v1 otherwise does not touch.
 
-**Fix when revisited:** do not revert kamdeva's three changes — they are correct. Give `HYST_GAP` a
-non-zero brand-specific value so the target stops dithering across the rounding boundary.
+**Note on an earlier inference, now withdrawn:** it was briefly recorded that ICBM being active
+proved `CANFD_ALT_BUTTONS` is unset on the Palisade. That inference depended on Hypothesis A being
+the cause, which is unconfirmed. Palisade ICBM availability remains **undetermined** — establish it
+on-vehicle.
 
 ---
 
@@ -302,7 +325,7 @@ ret.intelligentCruiseButtonManagementAvailable = not (stock_cp.flags & HyundaiFl
 | Car | ICBM available? | Why |
 |---|---|---|
 | Sorento (HDA2) | **Yes — confirmed** | `lka_steering=True`, so the `else:` branch that sets `CANFD_ALT_BUTTONS` is never reached, and the platform does not declare it |
-| Palisade (HDA1) | **Yes — inferred from observed behavior** | ICBM was demonstrably active on this vehicle (it caused the oscillation above), so `CANFD_ALT_BUTTONS` is not set. Consistent with kamdeva adding that flag in `f75dc291` and reverting it by their tip (`d4f06c60`) |
+| Palisade (HDA1) | **Undetermined** | Set at runtime if `0x1cf` is absent from ECAN. kamdeva added `CANFD_ALT_BUTTONS` to the LX3 platform (`f75dc291`) then reverted it by their tip (`d4f06c60`). Establish on-vehicle in Task 13 |
 
 **Consequence for validation:** the intuitive plan — try ICBM on the Palisade first to keep the
 Sorento untouched — may not be available. If ICBM is unavailable on the Palisade, the Sorento is

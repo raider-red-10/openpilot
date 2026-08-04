@@ -1,0 +1,38 @@
+{
+  "_note": "Frozen pre-change baseline for the Sorento regression gate. Both camera-bus probes are captured because the real vehicle's LKAS address (0x50 vs 0x110) is not known; the gate asserts BOTH remain unchanged, so it holds either way.",
+  "carFingerprint": "KIA_SORENTO_HEV_4TH_GEN_LFA2",
+  "variants": {
+    "0x50": {
+      "flags": 134225985,
+      "flagNames": [
+        "CANFD",
+        "CANFD_ALT_GEARS_2",
+        "CANFD_ANGLE_STEERING",
+        "CANFD_LKA_STEER_MSG"
+      ],
+      "safetyParam": 1040,
+      "safetyFlagNames": [
+        "CANFD_ANGLE_STEERING",
+        "CANFD_LKA_STEER_MSG"
+      ],
+      "alphaLongitudinalAvailable": false
+    },
+    "0x110": {
+      "flags": 134226497,
+      "flagNames": [
+        "CANFD",
+        "CANFD_ALT_GEARS_2",
+        "CANFD_ANGLE_STEERING",
+        "CANFD_LKA_STEER_MSG",
+        "CANFD_LKA_STEER_MSG_ALT"
+      ],
+      "safetyParam": 1168,
+      "safetyFlagNames": [
+        "CANFD_ANGLE_STEERING",
+        "CANFD_LKA_STEER_MSG",
+        "CANFD_LKA_STEER_MSG_ALT"
+      ],
+      "alphaLongitudinalAvailable": false
+    }
+  }
+}

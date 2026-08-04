@@ -17,6 +17,8 @@
 - **Port the resolved end state, not the commit sequence.** kamdeva's branch contains bisect reverts; take the tip state.
 - **Harness for LX3 is `CarHarness.hyundai_n`**, overriding kamdeva's `hyundai_l`.
 - **Commit identity** is already set repo-locally to `Nicholas Evans <265895801+raider-red-10@users.noreply.github.com>`.
+- **All pushes in the sunnypilot repo must use `git push --no-verify`.** `.lfsconfig` points LFS at sunnypilot's GitLab with `pushurl = ssh://git@gitlab.com/...`, which requires their SSH access. git-lfs's pre-push hook tries to upload all 263 LFS objects and fails with `Permission denied (publickey)`. We modify **zero** LFS files, and the `.lfsconfig` read URL is public, so clones of the fork resolve LFS from GitLab regardless — the objects never need to reach the fork. `--no-verify` skips only that hook. **If a future task ever modifies an LFS-tracked file, stop** — this workaround silently drops the object and the change would not reach anyone cloning the fork.
+- **`gh` account:** `raider-red-10` must be active (`gh auth status`). Switch back with `gh auth switch --user ceoairfarecoach` before running `gh` in unrelated projects — the active account is global to the CLI, not per-directory.
 
 ### Source references
 

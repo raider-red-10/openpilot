@@ -313,54 +313,38 @@ git commit -m "hyundai: add CCNC flags and LFA_ALT state enums"
 
 ---
 
-## Task 3: DBC definitions for `LFA_ALT` and CCNC messages
+## Task 3: DBC definitions — VERIFIED NO-OP, no changes required
 
-**Files:**
-- Modify: `opendbc_repo/opendbc/dbc/generator/hyundai/hyundai_canfd.dbc`
+**Status: complete, zero code changes.** The plan's premise was wrong. Every message and signal the port needs already exists in the base DBC; the base branch has the *definitions* and lacks only the *code that uses them* (Task 4).
 
-**Interfaces:**
-- Produces: CAN message definitions `LFA_ALT` (0xCB), `CCNC_0x161` (0x161), `CCNC_0x162` (0x162), and signals `ADAS_ActvACISta`, `ADAS_ActvACILvl2Sta`, `ADAS_StrAnglReqVal`, `ADAS_ACIAnglTqRedcGainVal`, `FCA_ESA_ActvSta`, `FCA_ESA_TqBstGainVal`. Task 4 packs these.
+**Verification performed:**
 
-- [ ] **Step 1: Inspect the source diff**
+| Message | Address | In `85f53e05` |
+|---|---|---|
+| `LFA_ALT` | `BO_ 203` = 0xCB | present, all 6 signals (`ADAS_ActvACISta`, `ADAS_ActvACILvl2Sta`, `ADAS_StrAnglReqVal`, `ADAS_ACIAnglTqRedcGainVal`, `FCA_ESA_ActvSta`, `FCA_ESA_TqBstGainVal`) |
+| `CCNC_0x161` | `BO_ 353` = 0x161 | present |
+| `CCNC_0x162` | `BO_ 354` = 0x162 | present |
+| `FR_CMR_03_50ms` | `BO_ 437` = 0x1B5 | present |
 
-```bash
-cd ~/sunnypilot/opendbc_repo
-git diff cf3223a5 1c2d90df -- opendbc/dbc/generator/hyundai/hyundai_canfd.dbc
+Every signal `create_ccnc()` writes was individually confirmed present (`ALERTS_*`, `SOUNDS_*`, `*_ICON`, `LANELINE_*`, `LCA_*`, `FAULT_*`, `SETSPEED*`, `DISTANCE*`, `LEAD*`, `CENTERLINE`, `VIBRATE`, `Info_*`, `Longitudinal_Distance`).
+
+**Why the original Step 2 would have caused a regression.** It said to `git checkout 1c2d90df -- <dbc>` on the grounds the diff was additive. Both of its own guard conditions were in fact violated:
+
+- the CCNC diff has **5 removals**, not purely additive
+- our base independently changed the same file (**6 insertions, 4 deletions**) — the same BCW signal-width fixes, made on both sides
+
+Taking the file wholesale would have silently reverted the base's work. Always diff *both* sides against the merge-base before a wholesale file take.
+
+**The one genuine CCNC-side delta, deliberately not ported:**
+
+```
+-VAL_ 53 GEAR 0 "P" 5 "D" 6 "N" 7 "R";
++VAL_ 53 GEAR 0 "P" 4 "S" 5 "D" 6 "N" 7 "R";
 ```
 
-Expected: a 12-line diff adding the message and signal definitions.
+Message 53 is `ACCELERATOR`, and `carstate.py:41` consumes its `GEAR` **only when `HyundaiFlags.EV` is set**. The Palisade is a hybrid without the EV flag, so it resolves to `GEAR_SHIFTER`. That Sport-mode label serves the EV platforms the CCNC branch added (Kona EV 2nd gen, Ioniq 5 N), not our car. Porting it would be unnecessary change in a file the Sorento also reads.
 
-- [ ] **Step 2: Apply the DBC changes**
-
-```bash
-git checkout 1c2d90df -- opendbc/dbc/generator/hyundai/hyundai_canfd.dbc
-git diff --stat HEAD -- opendbc/dbc/generator/hyundai/hyundai_canfd.dbc
-```
-
-Expected: the one file shows as modified.
-
-> This file is additive between `cf3223a5` and `1c2d90df` — taking it wholesale is safe. If `git diff cf3223a5 1c2d90df` in Step 1 shows any **removed** lines (leading `-` other than context), stop and port the hunks by hand instead.
-
-- [ ] **Step 3: Regenerate and verify the DBC parses**
-
-```bash
-cd ~/sunnypilot/opendbc_repo
-scons -j4 opendbc/dbc/
-python3 -c "
-from opendbc.can import CANDefine
-d = CANDefine('hyundai_canfd')
-print('LFA_ALT' in d.dv or 'parsed ok')
-"
-```
-
-Expected: no parse errors.
-
-- [ ] **Step 4: Commit**
-
-```bash
-git add opendbc/dbc/generator/hyundai/hyundai_canfd.dbc
-git commit -m "hyundai: add LFA_ALT and CCNC message definitions to CAN-FD DBC"
-```
+> If the Palisade ever reports an unmapped gear value on-vehicle, revisit this — but add the mapping to whichever message it actually uses, not blindly to 53.
 
 ---
 

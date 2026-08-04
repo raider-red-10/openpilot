@@ -6,7 +6,7 @@
 
 **Architecture:** The HDA1/HDA2 *dispatch* is already automatic via runtime `lka_steering` detection, so no new detection logic is needed. But the base branch has **no HDA1 + angle-steering support at all** — all 10 of its angle-steering platforms are HDA2-only, its 6 non-HDA2 platforms are torque-steering, and `LFA_ALT` (0xCB) appears zero times. The Palisade is the first such car here. So the core of this work is porting the CCNC/`LFA_ALT` infrastructure (~400 lines, 9 files) that supplies the HDA1 angle-steering control path and the digital-cluster messages; the LX3 platform definition on top of it is small by comparison. Every ported change is either self-gating on `not lka_steering` or explicitly gated to the LX3 platform, so the Sorento's code path is untouched.
 
-**Tech Stack:** Python 3, openpilot/sunnypilot, opendbc (car ports + panda safety in C), SCons, pytest, git submodules, git-lfs.
+**Tech Stack:** Python 3, openpilot/sunnypilot, opendbc (car ports + panda safety in C), SCons, unittest, git submodules, git-lfs.
 
 ## Global Constraints
 
@@ -128,11 +128,36 @@ System `python3` on this machine is 3.9.6 with no `numpy`. Use `uv`, which the r
 
 ```bash
 cd ~/sunnypilot/opendbc_repo
-uv sync
+uv sync --extra testing
 uv run python -c "import numpy, opendbc; print('imports ok')"
 ```
 
 Expected: `imports ok`. All subsequent Python in opendbc runs via `uv run`.
+
+> `--extra testing` is required — a plain `uv sync` installs runtime deps only and omits `hypothesis`, which the existing test module imports at load time.
+
+**opendbc has no pytest.** It uses plain `unittest` plus `unittest-parallel`, and every test is a `unittest.TestCase` method. Commands in this plan use:
+>
+> | Intent | Command |
+> |---|---|
+> | one test | `uv run python -m unittest opendbc.car.hyundai.tests.test_hyundai.TestHyundaiFingerprint.test_name -v` |
+> | one module | `uv run python -m unittest opendbc.car.hyundai.tests.test_hyundai` |
+> | a directory | `uv run python -m unittest discover -s opendbc/car/hyundai/tests -t .` |
+>
+> New tests must therefore be **methods on a `unittest.TestCase`**, not bare `test_*` functions, and parametrization uses `self.subTest(...)` rather than `pytest.mark.parametrize`.
+
+- [ ] **Step 4c: Set the git identity inside the submodule**
+
+`opendbc_repo` is a separate git repository and does **not** inherit the parent's local identity. Without this, commits there are authored with the global `ceo@airfarecoach.com`:
+
+```bash
+cd ~/sunnypilot/opendbc_repo
+git config --local user.name "Nicholas Evans"
+git config --local user.email "265895801+raider-red-10@users.noreply.github.com"
+git config --local --get-regexp '^user\.'
+```
+
+Expected: both values echoed back. Verify after the first commit with `git log -1 --format='%an <%ae>'`.
 
 - [ ] **Step 5: Capture the Sorento baseline**
 
@@ -223,7 +248,7 @@ def test_ccnc_flags_defined():
 
 ```bash
 cd ~/sunnypilot/opendbc_repo
-pytest opendbc/car/hyundai/tests/test_hyundai.py::test_ccnc_flags_defined -v
+uv run python -m unittest opendbc.car.hyundai.tests.test_hyundai.TestHyundaiFingerprint.test_ccnc_flags_defined -v
 ```
 
 Expected: FAIL with `AttributeError: CCNC`
@@ -266,7 +291,7 @@ class ESA_ActvSta(Enum):
 - [ ] **Step 5: Run the test to verify it passes**
 
 ```bash
-pytest opendbc/car/hyundai/tests/test_hyundai.py::test_ccnc_flags_defined -v
+uv run python -m unittest opendbc.car.hyundai.tests.test_hyundai.TestHyundaiFingerprint.test_ccnc_flags_defined -v
 ```
 
 Expected: PASS
@@ -274,7 +299,7 @@ Expected: PASS
 - [ ] **Step 6: Run the full hyundai suite to check for regressions**
 
 ```bash
-pytest opendbc/car/hyundai/tests/test_hyundai.py -q
+uv run python -m unittest opendbc.car.hyundai.tests.test_hyundai
 ```
 
 Expected: all pass — adding an unused flag must not change any existing behavior.
@@ -381,7 +406,7 @@ def test_hda2_car_does_not_use_lfa_alt():
 - [ ] **Step 2: Run it to verify it fails or passes for the right reason**
 
 ```bash
-pytest opendbc/car/hyundai/tests/test_lfa_alt.py -v
+uv run python -m unittest opendbc.car.hyundai.tests.test_lfa_alt -v
 ```
 
 Expected: PASS already (the Sorento has no CCNC flag). This test is a **guard** — it must keep passing through Tasks 4-8. If it ever fails, the Sorento has been contaminated.
@@ -442,8 +467,8 @@ git show 1c2d90df:opendbc/car/hyundai/hyundaicanfd.py | sed -n '/^def create_ccn
 - [ ] **Step 4: Verify the guard test still passes**
 
 ```bash
-pytest opendbc/car/hyundai/tests/test_lfa_alt.py -v
-pytest opendbc/car/hyundai/tests/test_hyundai.py -q
+uv run python -m unittest opendbc.car.hyundai.tests.test_lfa_alt -v
+uv run python -m unittest opendbc.car.hyundai.tests.test_hyundai
 ```
 
 Expected: all PASS.
@@ -490,8 +515,8 @@ Apply only the CCNC hunk — around line 273:
 - [ ] **Step 2: Verify the Sorento path is untouched**
 
 ```bash
-pytest opendbc/car/hyundai/tests/test_lfa_alt.py -v
-pytest opendbc/car/hyundai/tests/test_hyundai.py -q
+uv run python -m unittest opendbc.car.hyundai.tests.test_lfa_alt -v
+uv run python -m unittest opendbc.car.hyundai.tests.test_hyundai
 ```
 
 Expected: all PASS. The new code is inside `if self.CP.flags & HyundaiFlags.CCNC`, which is false for the Sorento.
@@ -577,7 +602,7 @@ This is self-gating: an HDA2 car never receives the CCNC safety param even if it
 - [ ] **Step 3: Run the guard tests**
 
 ```bash
-pytest opendbc/car/hyundai/tests/test_lfa_alt.py opendbc/car/hyundai/tests/test_hyundai.py -q
+uv run python -m unittest opendbc.car.hyundai.tests.test_lfa_alt opendbc.car.hyundai.tests.test_hyundai
 ```
 
 Expected: all PASS.
@@ -684,7 +709,7 @@ Expected: compiles with no warnings.
 - [ ] **Step 4: Run the panda safety tests**
 
 ```bash
-pytest opendbc/safety/tests/test_hyundai_canfd.py -q
+uv run python -m unittest opendbc.safety.tests.test_hyundai_canfd
 ```
 
 Expected: all PASS. Existing HDA2 tests must be unaffected — the new TX check is gated on `msg->addr == 0xCBU`, which HDA2 cars never send.
@@ -730,7 +755,7 @@ def test_lx3_platform_resolves_as_hda1_ccnc():
 - [ ] **Step 2: Run it to confirm it fails**
 
 ```bash
-pytest opendbc/car/hyundai/tests/test_lfa_alt.py::test_lx3_platform_resolves_as_hda1_ccnc -v
+uv run python -m unittest opendbc.car.hyundai.tests.test_lfa_alt.TestLfaAlt.test_lx3_platform_resolves_as_hda1_ccnc -v
 ```
 
 Expected: FAIL with `AttributeError: HYUNDAI_PALISADE_HEV_LX3`
@@ -804,8 +829,8 @@ Add the resulting entry to `opendbc/sunnypilot/car/car_list.json`, changing the 
 - [ ] **Step 8: Run all tests**
 
 ```bash
-pytest opendbc/car/hyundai/tests/ -q
-pytest opendbc/safety/tests/test_hyundai_canfd.py -q
+uv run python -m unittest discover -s opendbc/car/hyundai/tests -t .
+uv run python -m unittest opendbc.safety.tests.test_hyundai_canfd
 ```
 
 Expected: all PASS, including `test_hda2_car_does_not_use_lfa_alt`.
@@ -839,8 +864,7 @@ This is the hard gate. It must pass before anything is flashed.
 ```python
 import json
 import pathlib
-
-import pytest
+import unittest
 
 from opendbc.car import gen_empty_fingerprint
 from opendbc.car.hyundai.interface import CarInterface
@@ -848,43 +872,56 @@ from opendbc.car.hyundai.values import CAR
 from opendbc.car.hyundai.fingerprints import FW_VERSIONS
 from opendbc.car.structs import CarParams
 
-BASELINE = pathlib.Path(__file__).parents[4] / "docs/superpowers/baselines/sorento-baseline.json"
-_EXPECTED = json.loads(BASELINE.read_text())
+# Fixture lives alongside this test so the opendbc branch stays self-contained
+# and its tests pass when opendbc is checked out on its own.
+BASELINE = pathlib.Path(__file__).parent / "sorento_baseline.json"
 
 
-@pytest.mark.parametrize("probe", sorted(_EXPECTED["variants"]))
-def test_sorento_resolved_params_unchanged(probe):
+class TestSorentoRegression(unittest.TestCase):
   """The Sorento's resolved CarParams must be identical to the pre-change baseline.
 
   Both camera-bus probes are checked because the real vehicle's LKAS address
-  (0x50 vs 0x110) is unknown and they resolve to different flags. Asserting
-  both makes the gate valid either way.
+  (0x50 vs 0x110) is unknown and they resolve to different flags -- 0x110 adds
+  CANFD_LKA_STEER_MSG_ALT. Asserting both makes the gate valid either way.
   """
-  expected = _EXPECTED["variants"][probe]
 
-  candidate = CAR.KIA_SORENTO_HEV_4TH_GEN_LFA2
-  car_fw = [CarParams.CarFw(ecu=ecu, fwVersion=vers[0], address=addr, subAddress=sub or 0)
-            for (ecu, addr, sub), vers in FW_VERSIONS[candidate].items()]
-  fp = gen_empty_fingerprint()
-  fp[2][int(probe, 16)] = 16
+  def test_sorento_resolved_params_unchanged(self):
+    expected_all = json.loads(BASELINE.read_text())
+    candidate = CAR.KIA_SORENTO_HEV_4TH_GEN_LFA2
+    car_fw = [CarParams.CarFw(ecu=ecu, fwVersion=vers[0], address=addr, subAddress=sub or 0)
+              for (ecu, addr, sub), vers in FW_VERSIONS[candidate].items()]
 
-  CP = CarInterface.get_params(candidate, fp, car_fw, False, True, False)
+    for probe, expected in sorted(expected_all["variants"].items()):
+      with self.subTest(probe=probe):
+        fp = gen_empty_fingerprint()
+        fp[2][int(probe, 16)] = 16
 
-  assert str(CP.carFingerprint) == _EXPECTED["carFingerprint"]
-  assert int(CP.flags) == expected["flags"], (
-    f"[{probe}] Sorento flags changed: {expected['flags']} -> {int(CP.flags)} "
-    f"(baseline decoded as {expected['flagNames']})")
-  assert int(CP.safetyConfigs[-1].safetyParam) == expected["safetyParam"], (
-    f"[{probe}] Sorento safetyParam changed: {expected['safetyParam']} -> "
-    f"{int(CP.safetyConfigs[-1].safetyParam)} (baseline decoded as {expected['safetyFlagNames']})")
-  assert bool(CP.alphaLongitudinalAvailable) == expected["alphaLongitudinalAvailable"]
+        CP = CarInterface.get_params(candidate, fp, car_fw, False, True, False)
+
+        assert str(CP.carFingerprint) == expected_all["carFingerprint"]
+        assert int(CP.flags) == expected["flags"], (
+          f"[{probe}] Sorento flags changed: {expected['flags']} -> {int(CP.flags)} "
+          f"(baseline decoded as {expected['flagNames']})")
+        assert int(CP.safetyConfigs[-1].safetyParam) == expected["safetyParam"], (
+          f"[{probe}] Sorento safetyParam changed: {expected['safetyParam']} -> "
+          f"{int(CP.safetyConfigs[-1].safetyParam)} (baseline decoded as {expected['safetyFlagNames']})")
+        assert bool(CP.alphaLongitudinalAvailable) == expected["alphaLongitudinalAvailable"]
+```
+
+- [ ] **Step 1b: Copy the baseline fixture into opendbc**
+
+The canonical baseline lives in the sunnypilot repo as project documentation, but the test needs it locally so the opendbc branch is self-contained:
+
+```bash
+cp ~/sunnypilot/docs/superpowers/baselines/sorento-baseline.json \
+   ~/sunnypilot/opendbc_repo/opendbc/car/hyundai/tests/sorento_baseline.json
 ```
 
 - [ ] **Step 2: Run it**
 
 ```bash
 cd ~/sunnypilot/opendbc_repo
-pytest opendbc/car/hyundai/tests/test_lx3_regression.py -v
+uv run python -m unittest opendbc.car.hyundai.tests.test_lx3_regression -v
 ```
 
 Expected: **PASS.** If it fails, a change from Tasks 2-8 leaked into the Sorento's path. Stop and fix before continuing — do not proceed to any build or flash.
@@ -1005,7 +1042,7 @@ Expected: builds clean. This is the first full build — expect it to take a whi
 
 ```bash
 cd ~/sunnypilot/opendbc_repo
-pytest opendbc/car/hyundai/tests/ opendbc/safety/tests/test_hyundai_canfd.py -q
+uv run python -m unittest discover -s opendbc/car/hyundai/tests -t . && uv run python -m unittest opendbc.safety.tests.test_hyundai_canfd
 ```
 
 Expected: all PASS, including the Task 9 regression gate.

@@ -184,8 +184,30 @@ diff. All three teach Intelligent Cruise Button Management to operate when only 
 | `sunnypilot/.../longitudinal_planner.py` | `long_enabled` true on `latActive and cruiseState.enabled` |
 | `sunnypilot/.../icbm/controller.py` | ICBM `ready` becomes `CC.enabled or CC.latActive` |
 
-**Decision: adopt all three ungated.** They are unreachable on the Sorento while the
-**Intelligent Cruise Button Management** toggle is off, which is its current state.
+**Decision: excluded from v1.** Port them to a branch, do not merge them until validated
+on-vehicle.
+
+The owner believes **Intelligent Cruise Button Management is ON** on the Sorento. That voids the
+unreachability argument below — with the toggle on, `pcmCruiseSpeed` is `False` and all three
+changes are live on the car that currently works:
+
+| Change | Behavior when ICBM is on |
+|---|---|
+| `controlsd.py` | added conjunct is `False`, so `cruiseControl.cancel` is permanently `False` — openpilot never cancels stock cruise |
+| `icbm/controller.py` | `run()` no longer early-returns, so `update_readiness()` executes and ICBM activates under lateral-only |
+| `longitudinal_planner.py` | `_cleanup_unsupported_params` no longer strips `SmartCruiseControlVision`/`Map`, so curve targets are computed and consumed |
+
+None of this is required for the Palisade to steer, and ICBM may not even be available on that car
+(see availability table below). Excluding these changes from v1 keeps the "Sorento provably
+unchanged" guarantee intact at no cost to the port. Revisit as its own validated change after the
+unified branch lands.
+
+**First action when revisited:** confirm the toggle's actual state rather than assuming. If it
+turns out to be off, the analysis below applies unchanged and the changes are safe to adopt.
+
+---
+
+*Retained for reference — the analysis that applies only if ICBM is off:*
 
 `CP_SP.pcmCruiseSpeed` is set `False` in exactly one place, and only on explicit opt-in:
 
@@ -250,7 +272,7 @@ the `NUM_READERS` fix and "kept for redundancy". Drop them; re-add only if a fai
 | Risk | Severity | Mitigation |
 |---|---|---|
 | `0x105` counter relaxation reaches the Sorento | **High** — weakens a panda safety check on a working car | Gate to LX3 platform; assert in tests that the Sorento's safety param is unchanged |
-| ICBM changes alter Sorento cruise behavior | **Low** — traced unreachable while the ICBM toggle is off | Confirm toggle is off; isolate in its own commit; re-evaluate on-vehicle if ever enabled |
+| ICBM changes alter Sorento cruise behavior | **High if merged** — ICBM is believed ON, so all three are live on the working car | **Excluded from v1.** Port to a branch, validate on-vehicle as a separate change |
 | Learned params carry between cars on one device | Medium — one car running the other's `steerRatio`/calibration | Documented swap procedure (below) |
 | 743-commit forward port | Medium — the port is small but the base moved a lot | Re-apply patches onto current tip by hand; do not rebase the fork branch wholesale |
 | Repo restructured since fork point | Medium — every fork patch path is stale | The tree moved under `openpilot/` (e.g. `selfdrive/controls/controlsd.py` → `openpilot/selfdrive/controls/controlsd.py`). A wholesale rebase would conflict on every file; hand re-application is required, not optional |
@@ -401,16 +423,17 @@ Do not begin before step 2 is answered.
    `hyundai_l`. See harness note above.
 2. **Fingerprint** — adopt the fork's FW fingerprint block. The vehicle has previously fingerprinted
    correctly on that branch.
-3. **ICBM** — adopt all three changes ungated, in an isolated commit. Traced unreachable while the
-   ICBM toggle is off. See section E.
+3. **ICBM** — **excluded from v1.** ICBM is believed to be ON on the Sorento, which makes all three
+   changes live on the working car. Port them to a branch; merge only after on-vehicle validation.
+   See section E.
 
 ## Open questions
 
-1. **Is ICBM currently off on the Sorento?** The entire section-E analysis depends on it. If it is
-   on, those three changes must be evaluated on-vehicle before adoption.
-2. **Does ICBM get enabled after this lands?** Out of scope for v1, but it is the main functional
-   upside available to both cars — curve and speed-limit slowdown via cruise-button modulation,
-   without openpilot longitudinal. If pursued, test on the Palisade first, not the Sorento.
+1. **Confirm ICBM's actual toggle state on the Sorento.** Currently believed on, not verified. If
+   it is in fact off, the three changes are provably inert and can be adopted in v1 after all.
+2. **Is ICBM available on the Palisade at all?** Determined at runtime by `CANFD_ALT_BUTTONS`.
+   If unavailable there, the Sorento is the only car that can exercise the feature — which means
+   validating it necessarily means testing on the working car. Plan accordingly.
 
 ---
 

@@ -112,11 +112,25 @@ Expected: `mine`, `origin`, `kamdeva` all listed.
 
 ```bash
 cd ~/sunnypilot
-git submodule update --init --depth=1 opendbc_repo
-cd opendbc_repo && git rev-parse HEAD
+git submodule update --init opendbc_repo
+git -C opendbc_repo rev-parse HEAD
 ```
 
 Expected: `85f53e05cb228d304e333a79dd53e914c327cfb7`
+
+> Do **not** pass `--reference` pointing at a blobless clone (`--filter=blob:none`) — it advertises objects it does not have and the clone fails with `did not receive expected object`. Do not use `--depth=1` either; the submodule pins a specific SHA that a shallow fetch may not reach.
+
+- [ ] **Step 4b: Set up the Python environment**
+
+System `python3` on this machine is 3.9.6 with no `numpy`. Use `uv`, which the repo is configured for:
+
+```bash
+cd ~/sunnypilot/opendbc_repo
+uv sync
+uv run python -c "import numpy, opendbc; print('imports ok')"
+```
+
+Expected: `imports ok`. All subsequent Python in opendbc runs via `uv run`.
 
 - [ ] **Step 5: Capture the Sorento baseline**
 
@@ -824,6 +838,8 @@ This is the hard gate. It must pass before anything is flashed.
 import json
 import pathlib
 
+import pytest
+
 from opendbc.car import gen_empty_fingerprint
 from opendbc.car.hyundai.interface import CarInterface
 from opendbc.car.hyundai.values import CAR
@@ -831,29 +847,36 @@ from opendbc.car.hyundai.fingerprints import FW_VERSIONS
 from opendbc.car.structs import CarParams
 
 BASELINE = pathlib.Path(__file__).parents[4] / "docs/superpowers/baselines/sorento-baseline.json"
+_EXPECTED = json.loads(BASELINE.read_text())
 
 
-def test_sorento_resolved_params_unchanged():
-  """The Sorento's resolved CarParams must be byte-identical to the pre-change baseline."""
-  expected = json.loads(BASELINE.read_text())
+@pytest.mark.parametrize("probe", sorted(_EXPECTED["variants"]))
+def test_sorento_resolved_params_unchanged(probe):
+  """The Sorento's resolved CarParams must be identical to the pre-change baseline.
+
+  Both camera-bus probes are checked because the real vehicle's LKAS address
+  (0x50 vs 0x110) is unknown and they resolve to different flags. Asserting
+  both makes the gate valid either way.
+  """
+  expected = _EXPECTED["variants"][probe]
 
   candidate = CAR.KIA_SORENTO_HEV_4TH_GEN_LFA2
   car_fw = [CarParams.CarFw(ecu=ecu, fwVersion=vers[0], address=addr, subAddress=sub or 0)
             for (ecu, addr, sub), vers in FW_VERSIONS[candidate].items()]
   fp = gen_empty_fingerprint()
-  fp[2][0x50] = 16
+  fp[2][int(probe, 16)] = 16
 
   CP = CarInterface.get_params(candidate, fp, car_fw, False, True, False)
 
-  assert str(CP.carFingerprint) == expected["carFingerprint"]
+  assert str(CP.carFingerprint) == _EXPECTED["carFingerprint"]
   assert int(CP.flags) == expected["flags"], (
-    f"Sorento flags changed: {expected['flags']} -> {int(CP.flags)}")
+    f"[{probe}] Sorento flags changed: {expected['flags']} -> {int(CP.flags)} "
+    f"(baseline decoded as {expected['flagNames']})")
   assert int(CP.safetyConfigs[-1].safetyParam) == expected["safetyParam"], (
-    f"Sorento safetyParam changed: {expected['safetyParam']} -> {int(CP.safetyConfigs[-1].safetyParam)}")
+    f"[{probe}] Sorento safetyParam changed: {expected['safetyParam']} -> "
+    f"{int(CP.safetyConfigs[-1].safetyParam)} (baseline decoded as {expected['safetyFlagNames']})")
   assert bool(CP.alphaLongitudinalAvailable) == expected["alphaLongitudinalAvailable"]
 ```
-
-> If Task 1 Step 5 used `fp[2][0x110]` instead of `fp[2][0x50]`, use the same here.
 
 - [ ] **Step 2: Run it**
 

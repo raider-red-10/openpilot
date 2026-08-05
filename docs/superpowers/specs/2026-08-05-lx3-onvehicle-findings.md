@@ -55,15 +55,36 @@ openpilot sends byte-identical `LFA_ALT` in both the working and failing case,
 so message content is not the differentiator — the car's internal ADAS state
 is. `ADAS_ActvACISta` is hardcoded to `INIT` in `create_steering_messages()`.
 
-## Next step
+## Resolved: engagement is car state, not message content
 
-Observe the car's **native** LFA rather than guessing the arming protocol:
-turn MADS off in settings so openpilot ignores the button, drive, press LFA,
-and log the camera's `LFA_ALT` and `CCNC_0x161` output on bus 2 — including a
-case where the car refuses (no lane lines). Script at `/data/lx3_native.py`.
+Captured the camera's own `LFA_ALT` while it natively steered the car
+(openpilot offroad, relay closed, so the camera reaches the MDPS):
 
-If the camera's `ADAS_ActvACISta` differs from openpilot's `INIT`, that is the
-arming signal, measured rather than inferred.
+```
+ADAS_ActvACISta=0  ADAS_ActvACILvl2Sta=2  ADAS_StrAnglReqVal=-6.5
+ADAS_ACIAnglTqRedcGainVal=0.1  FCA_ESA_ActvSta=0
+```
+
+`ADAS_ActvACISta` is **0 (INIT) even while actively steering** -- identical to
+what openpilot hardcodes. Every other field matches what openpilot already
+sends. There is no arming field in `LFA_ALT` we were failing to set.
+
+So the ADAS is armed by ACC engagement through some path with no CAN
+signature we could find, and button-engage is not reachable. Hypothesis ruled
+out by measurement rather than abandoned.
+
+Two mechanics worth remembering:
+
+- `check_relay` messages are **statically blocked from forwarding**, always --
+  not only while engaged. With openpilot running, the camera's `0xCB` never
+  reaches the MDPS, so the car's native LFA cannot work at all. Offroad mode
+  drops that blocking, which is how the native capture was possible.
+- In offroad the panda reports only **bus 0 and 1**; bus 2 is absent. Read the
+  camera's messages off bus 0 there (relay closed, so they forward).
+
+**Landed:** LFA button is disable-only on CCNC angle-steering cars. Engage via
+main cruise (arms the ADAS), disengage with the button (commands no steering,
+so no fault). Gated to `HYUNDAI_PALISADE_HEV_LX3` alone.
 
 ## Known limitations (car does not broadcast)
 

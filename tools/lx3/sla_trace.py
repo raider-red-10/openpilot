@@ -20,6 +20,7 @@ import sys
 import time
 
 from openpilot.cereal import messaging
+from openpilot.common.params import Params
 
 OUT = "/data/sla_trace.txt"
 HEARTBEAT = 10.0  # secs
@@ -42,7 +43,8 @@ def main():
   out = sys.stdout if to_stdout else open(OUT, "w", buffering=1)
 
   sm = messaging.SubMaster(["carState", "carStateSP", "longitudinalPlanSP",
-                            "carControlSP", "liveMapDataSP"])
+                            "carControl", "carControlSP", "liveMapDataSP"])
+  params = Params()
 
   print("tracing -- drive past a speed limit sign. ctrl-c to stop.", file=sys.stderr)
   start = time.monotonic()
@@ -54,14 +56,23 @@ def main():
       continue
 
     cs = sm["carState"]
+    cc = sm["carControl"]
     sl = sm["longitudinalPlanSP"].speedLimit
     icbm = sm["carControlSP"].intelligentCruiseButtonManagement
     mapd = sm["liveMapDataSP"]
 
+    # The assist leaves `disabled` only when long_enabled and enabled are both true.
+    # long_enabled is carControl.enabled -- openpilot's own engaged state, NOT the car's
+    # cruise -- and enabled is the SpeedLimitMode param. Log both or the state is unreadable.
+    mode = params.get("SpeedLimitMode", return_default=True)
+
     fields = [
       f"v={cs.vEgo * 2.237:5.1f}mph",
       f"set={cs.cruiseState.speedCluster * 2.237:5.1f}",
-      f"enabled={int(cs.cruiseState.enabled)}",
+      f"carCruise={int(cs.cruiseState.enabled)}",
+      f"ccEnabled={int(cc.enabled)}",
+      f"lat={int(cc.latActive)}",
+      f"mode={mode}",
       # stage 1: does the camera see a sign?
       f"car={sm['carStateSP'].speedLimit * 2.237:5.1f}",
       # stage 1b: does map data have anything?
@@ -88,7 +99,8 @@ def main():
            round(sl.resolver.speedLimit, 1), round(sl.resolver.speedLimitFinal, 1),
            int(sl.resolver.speedLimitValid), str(sl.resolver.source),
            str(sl.assist.state), int(sl.assist.enabled), int(sl.assist.active),
-           str(icbm.state), str(icbm.sendButton), int(cs.cruiseState.enabled))
+           str(icbm.state), str(icbm.sendButton), int(cs.cruiseState.enabled),
+           int(cc.enabled), int(cc.latActive), int(mode))
 
     now = time.monotonic()
     if key != last_line or (now - last_emit) > HEARTBEAT:

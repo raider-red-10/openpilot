@@ -16,6 +16,30 @@ EventNameSP = custom.OnroadEventSP.EventName
 DISTANCE_LONG_PRESS = 50
 
 
+def set_speed_management_engaged(CP: structs.CarParams, CP_SP: custom.CarParamsSP,
+                                 op_enabled: bool, car_cruise_enabled: bool) -> bool:
+  """Whether the set speed is ours to manage right now.
+
+  ICBM moves the set speed by pressing cruise buttons, and Speed Limit Assist rides on top
+  of it. Neither needs openpilot to hold longitudinal control -- they need the *car's*
+  cruise to be running, so that changing the set speed does something.
+
+  Gating them on openpilot's own `enabled` breaks that on a MADS car. MADS strips pcmEnable
+  while lateral is already engaged, which is what keeps steering independent of cruise, so
+  `enabled` never goes true and both features sit disabled with a valid speed limit next to
+  them. Measured on a 2026 Palisade Hybrid: carCruise=1, ccEnabled=0, lat=1, a resolved
+  30 mph limit, and the assist stuck in `disabled` for an entire drive.
+
+  Only applies where ICBM owns the set speed -- pcmCruiseSpeed goes False exactly when ICBM
+  is enabled and available on a car openpilot does not drive longitudinally. Everywhere
+  else this is openpilot's `enabled`, unchanged.
+  """
+  if not CP.openpilotLongitudinalControl and not CP_SP.pcmCruiseSpeed:
+    return op_enabled or car_cruise_enabled
+
+  return op_enabled
+
+
 class CruiseHelper:
   def __init__(self, CP: structs.CarParams):
     self.CP = CP

@@ -193,9 +193,8 @@ class TestSpeedLimitAssistChain(unittest.TestCase):
     c.step(button_events=plus_press())
     c.step(n=1500)  # ICBM needs time to walk 20 -> 34 one press at a time
 
-    self.assertEqual(c.car_set_mph, TARGET_MPH,
-                     f"car set speed ended at {c.car_set_mph}, expected {TARGET_MPH} "
-                     f"(openpilot's was {c.op_set_mph}, assist {c.sla.state})")
+    msg = f"car set speed ended at {c.car_set_mph}, expected {TARGET_MPH} (openpilot's was {c.op_set_mph})"
+    self.assertEqual(c.car_set_mph, TARGET_MPH, msg)
 
   def test_does_not_overshoot(self):
     c = Chain()

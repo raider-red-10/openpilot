@@ -128,11 +128,41 @@ on the first Palisade drive.
 **Untested on vehicle.** This is the first code in this branch that transmits to
 the car rather than reading from it.
 
+## Resolved: turn signals, and with them lane changes
+
+**Symptom:** no automatic lane change. `desire_helper` needs
+`leftBlinker != rightBlinker`, and with `BLINKERS` (`0x413`) absent both stayed
+False forever.
+
+**Found:** `0x3e3` byte 11, bit 2 left and bit 4 right -- the same two-bits-apart
+layout `BLINKERS` uses for `LEFT_LAMP`/`RIGHT_LAMP`. 16 bytes at 5Hz on E-CAN.
+Confirmed live: each bit toggles at 1.32Hz for its own stalk and is static for
+the other.
+
+**What made the scan work.** The first pass tested "was this bit ever high" and
+returned ~500 candidates -- every counter and checksum on the bus passes that.
+The discriminator that works is that a blinker *flashes*: require the bit to
+change during one stalk's phase and never change with both stalks off. That drops
+it to a handful. Two mechanical points mattered as much as the idea:
+
+- Accumulate frames as integer bitmasks. Per-bit Python cannot keep up with CAN
+  FD; the queue saturates, `drain_sock` stops returning, and each phase silently
+  records the previous phase's backlog.
+- Hyundai CAN FD puts `CHECKSUM` in bytes 0-1 and `COUNTER` in byte 2. A dozen
+  messages reporting "byte 2 bit 7" is the counter rolling, not a signal.
+
+The cross-check came free: `find_candidates` only drops a bit that also changed
+while both stalks were off, so a bit appearing under LEFT and absent under RIGHT
+was already proven static for the other stalk.
+
+**Landed:** `BLINKERS_ALT` in the DBC with only the two lamp bits declared, and a
+100 frame hold instead of the usual 50 -- at 5Hz, up to 588ms (59 frames) can pass
+between two frames that catch the lamp lit, and 50 would drop the blinker between
+flashes.
+
+Tool: `tools/lx3/blinker_scan.py`, which also has a `watch` mode for confirming a
+single bit live.
+
 ## Known limitations (car does not broadcast)
 
-Door/seatbelt state, hands-on-wheel detection, blinker detection. Not bugs.
-
-Blinker absence is why the Palisade does not auto lane change: `desire_helper`
-requires `leftBlinker != rightBlinker`, and `BLINKERS` (`0x413`) is absent, so
-both stay False. The signal is somewhere on the bus; finding it is the same
-differential scan that found the LFA button.
+Door/seatbelt state, hands-on-wheel detection. Not bugs.

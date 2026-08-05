@@ -163,6 +163,34 @@ flashes.
 Tool: `tools/lx3/blinker_scan.py`, which also has a `watch` mode for confirming a
 single bit live.
 
+## Resolved: the car-sourced speed limit was gated on the wrong bus
+
+**Symptom:** with ICBM live and Speed Limit Assist set to Assist, no prompt ever
+appeared and the set speed never moved.
+
+**Cause:** `carstate_ext.update_speed_limit` reads `FR_CMR_02_100ms` (`0x1fa`)
+from the E-CAN parser on LKA-steering cars and from the *camera* parser on
+everything else, but availability was always decided by looking for `0x1fa` on
+E-CAN. On an LFA-steering car the message is on the camera bus, so
+`SPEED_LIMIT_AVAILABLE` was never set, `carStateSP.speedLimit` stayed 0, and the
+assist had nothing to act on. HDA2 was unaffected -- its E-CAN is bus 1, which is
+both where it reads from and what was checked.
+
+Had the flag been set from E-CAN anyway it would have been worse than useless: it
+registers a camera message that is not on that bus, which invalidates the parser.
+
+**Landed:** the gate now checks whichever bus the read uses. Measured on the
+vehicle: `0x1fa` appears on bus 2 only, 81 frames in 8s (~10Hz, matching the
+`_100ms` name), and `SPEED_LIMIT_AVAILABLE` is set after the fix.
+
+**Source policy.** `Combined` and `Car State Priority` both query car and map;
+they differ only in the tie-break -- `Combined` takes the lower of the two,
+priority takes the first non-zero in order. With only one source producing a
+value they are identical, so switching policies was never going to fix this.
+
+Map data still contributes nothing (mapd/GPS/offline maps, untouched here), so
+coverage is limited to what the camera reads off signs.
+
 ## Known limitations (car does not broadcast)
 
 Door/seatbelt state, hands-on-wheel detection. Not bugs.

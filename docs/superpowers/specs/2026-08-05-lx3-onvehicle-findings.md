@@ -86,6 +86,53 @@ Two mechanics worth remembering:
 main cruise (arms the ADAS), disengage with the button (commands no steering,
 so no fault). Gated to `HYUNDAI_PALISADE_HEV_LX3` alone.
 
+## Resolved: ICBM and Speed Limit Assist "Assist" mode
+
+**Symptom:** "Assist" not selectable in Speed Limit Settings; on the Palisade the
+ICBM toggle was absent entirely.
+
+**Cause, traced end to end:**
+
+```
+Assist selectable <- sla_available = (has_long or has_icbm)     # has_long False, stock SCC
+has_icbm          <- intelligentCruiseButtonManagementAvailable and the ICBM param
+available         <- not (flags & CANFD_ALT_BUTTONS)
+```
+
+The Palisade has no `0x1cf` on E-CAN, so it gets `CANFD_ALT_BUTTONS` and its
+buttons live in `CRUISE_BUTTONS_ALT` (`0x1aa`). ICBM presses SET+/SET- for the
+driver, and the CAN FD path for alt-button cars was an empty `pass` with a TODO
+-- the availability flag was guarding an unimplemented feature, not an unsafe
+one. The UI additionally force-downgrades the mode to Warning whenever it is
+unavailable, which is why it would not stay on Assist.
+
+**Landed:** `create_buttons_alt()` replays the car's last `0x1aa` frame and
+overrides only the button field; the packer already computes the HKG CAN FD
+checksum for every message in this DBC, so no reverse engineering was needed.
+Buttons present in the captured frame are cleared, or a frame sampled while the
+driver held main-cruise or LDA would replay that press 20 times. `0x1aa` is in
+the TX list for the CCNC camera-SCC config only, the tx hook also requires the
+alt-buttons flag, and the availability rule in `interface.py` is scoped to match
+-- all three must stay in sync.
+
+Enabling the ICBM param also sets `CP_SP.pcmCruiseSpeed = False`, which is what
+actually unblocks Assist, Dynamic Experimental Control, Custom ACC Increments and
+Smart Cruise Control Vision/Map.
+
+**Not changed:** `HYST_GAP = 0.0` in `icbm/controller.py` makes `apply_hysteresis`
+a pass-through, which in principle lets `v_target` oscillate across a rounding
+boundary and spam buttons. Left alone deliberately: it is shared tuning, and the
+Sorento has run ICBM at this value without trouble. Watch for set-speed hunting
+on the first Palisade drive.
+
+**Untested on vehicle.** This is the first code in this branch that transmits to
+the car rather than reading from it.
+
 ## Known limitations (car does not broadcast)
 
 Door/seatbelt state, hands-on-wheel detection, blinker detection. Not bugs.
+
+Blinker absence is why the Palisade does not auto lane change: `desire_helper`
+requires `leftBlinker != rightBlinker`, and `BLINKERS` (`0x413`) is absent, so
+both stay False. The signal is somewhere on the bus; finding it is the same
+differential scan that found the LFA button.

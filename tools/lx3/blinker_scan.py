@@ -11,7 +11,7 @@ import sys
 import time
 from collections import defaultdict
 
-import cereal.messaging as messaging
+from openpilot.cereal import messaging
 
 OUT = "/data/blinker_scan.txt"
 

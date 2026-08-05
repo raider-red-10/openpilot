@@ -4,6 +4,7 @@ import numpy as np
 from opendbc.car.structs import car
 from openpilot.common.constants import CV
 from openpilot.sunnypilot.selfdrive.car.cruise_ext import VCruiseHelperSP
+from openpilot.sunnypilot.selfdrive.car.lx3_debug import dlog
 
 
 # WARNING: this value was determined based on the model's training distribution,
@@ -51,6 +52,10 @@ class VCruiseHelper(VCruiseHelperSP):
 
     _enabled = self.update_enabled_state(CS, enabled)
 
+    dlog("v_cruise.in", avail=int(CS.cruiseState.available), carCruise=int(CS.cruiseState.enabled),
+         enabled=int(enabled), _enabled=int(_enabled), carSpeedKph=round(CS.cruiseState.speed * CV.MS_TO_KPH, 1),
+         opKph=round(self.v_cruise_kph, 1), seeded=int(self.v_cruise_seeded_from_car))
+
     if CS.cruiseState.available:
       if not self.CP.pcmCruise or (not self.CP_SP.pcmCruiseSpeed and _enabled):
         # if stock cruise is completely disabled, then we can use our own set speed logic
@@ -58,7 +63,9 @@ class VCruiseHelper(VCruiseHelperSP):
         self._update_v_cruise_non_pcm(CS, _enabled, is_metric)
         self.update_speed_limit_assist_v_cruise_non_pcm()
         self.v_cruise_cluster_kph = self.v_cruise_kph
+        dlog("v_cruise.nonpcm", opKph=round(self.v_cruise_kph, 1), seeded=int(self.v_cruise_seeded_from_car))
       else:
+        dlog("v_cruise.mirror", carSpeedKph=round(CS.cruiseState.speed * CV.MS_TO_KPH, 1))
         self.v_cruise_kph = CS.cruiseState.speed * CV.MS_TO_KPH
         self.v_cruise_cluster_kph = CS.cruiseState.speedCluster * CV.MS_TO_KPH
         if CS.cruiseState.speed == 0:
@@ -97,6 +104,11 @@ class VCruiseHelper(VCruiseHelperSP):
       self.v_cruise_kph = float(np.clip(CS.cruiseState.speed * CV.MS_TO_KPH, self.v_cruise_min, V_CRUISE_MAX))
       self.v_cruise_cluster_kph = self.v_cruise_kph
       self.v_cruise_seeded_from_car = True
+      dlog("seed.done", fromKph=round(CS.cruiseState.speed * CV.MS_TO_KPH, 1),
+           opKph=round(self.v_cruise_kph, 1), minKph=self.v_cruise_min)
+    else:
+      dlog("seed.skip", seeded=int(self.v_cruise_seeded_from_car),
+           carSpeedKph=round(CS.cruiseState.speed * CV.MS_TO_KPH, 1))
 
   def _update_v_cruise_non_pcm(self, CS, enabled, is_metric):
     # handle button presses. TODO: this should be in state_control, but a decelCruise press
@@ -137,7 +149,10 @@ class VCruiseHelper(VCruiseHelperSP):
     # Speed Limit Assist for Non PCM long cars.
     # True: Disallow set speed changes when user confirmed the target set speed during preActive state
     # False: Allow set speed changes as SLA is not requesting user confirmation
-    if self.update_speed_limit_assist_pre_active_confirmed(button_type):
+    confirmed = self.update_speed_limit_assist_pre_active_confirmed(button_type)
+    dlog("btn.press", dedupe=False, btn=str(button_type), longPress=int(long_press),
+         confirmBlocked=int(confirmed), opKphBefore=round(self.v_cruise_kph, 1))
+    if confirmed:
       return
 
     long_press, v_cruise_delta = VCruiseHelperSP.update_v_cruise_delta(self, long_press, v_cruise_delta)

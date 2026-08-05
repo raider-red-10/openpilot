@@ -38,6 +38,7 @@ class VCruiseHelper(VCruiseHelperSP):
     self.v_cruise_kph_last = 0
     self.button_timers = {ButtonType.decelCruise: 0, ButtonType.accelCruise: 0}
     self.button_change_states = {btn: {"standstill": False, "enabled": False} for btn in self.button_timers}
+    self.v_cruise_seeded_from_car = False
 
   @property
   def v_cruise_initialized(self):
@@ -53,6 +54,7 @@ class VCruiseHelper(VCruiseHelperSP):
     if CS.cruiseState.available:
       if not self.CP.pcmCruise or (not self.CP_SP.pcmCruiseSpeed and _enabled):
         # if stock cruise is completely disabled, then we can use our own set speed logic
+        self._seed_v_cruise_from_car(CS)
         self._update_v_cruise_non_pcm(CS, _enabled, is_metric)
         self.update_speed_limit_assist_v_cruise_non_pcm()
         self.v_cruise_cluster_kph = self.v_cruise_kph
@@ -71,6 +73,30 @@ class VCruiseHelper(VCruiseHelperSP):
 
     if not self.CP.pcmCruise or not self.CP_SP.pcmCruiseSpeed:
       self.update_button_timers(CS, enabled)
+
+  def _seed_v_cruise_from_car(self, CS) -> None:
+    """Adopt the car's set speed once, when its cruise engages.
+
+    On a pcmCruise car where ICBM owns the set speed, openpilot tracks its own target and ICBM
+    presses buttons to walk the car to it. Left unseeded that target starts at V_CRUISE_UNSET,
+    gets clipped to V_CRUISE_MAX, and ICBM spends the drive trying to drag the car up to 90 mph
+    -- measured on a 2026 Palisade: carSet=20, opSet=90, btn=increase held indefinitely.
+
+    Keyed off the car's own cruise rather than a rising edge of openpilot's engagement, so it
+    still seeds when openpilot starts with cruise already on. Re-arms on disengage.
+    """
+    if not self.CP.pcmCruise or self.CP_SP.pcmCruiseSpeed:
+      return
+
+    if not CS.cruiseState.enabled:
+      self.v_cruise_seeded_from_car = False
+      return
+
+    # A car with cruise engaged but no set speed yet has nothing to give us
+    if not self.v_cruise_seeded_from_car and CS.cruiseState.speed > 0:
+      self.v_cruise_kph = float(np.clip(CS.cruiseState.speed * CV.MS_TO_KPH, self.v_cruise_min, V_CRUISE_MAX))
+      self.v_cruise_cluster_kph = self.v_cruise_kph
+      self.v_cruise_seeded_from_car = True
 
   def _update_v_cruise_non_pcm(self, CS, enabled, is_metric):
     # handle button presses. TODO: this should be in state_control, but a decelCruise press
@@ -140,14 +166,9 @@ class VCruiseHelper(VCruiseHelperSP):
 
   def initialize_v_cruise(self, CS, experimental_mode: bool, dynamic_experimental_control: bool) -> None:
     # initializing is handled by the PCM
+    # Seeding for the ICBM case is in _seed_v_cruise_from_car, which sees the current CarState.
+    # This is called with CS_prev, from before the car's cruise engaged, so it reports no set speed.
     if self.CP.pcmCruise:
-      # ...unless ICBM owns the set speed. Then openpilot tracks its own target and ICBM presses
-      # buttons to walk the car to it, so it has to start from what the car is actually set to.
-      # Left unseeded it stays at V_CRUISE_UNSET, Speed Limit Assist compares its target against
-      # that, never confirms, and ICBM chases a speed the driver never asked for.
-      if not self.CP_SP.pcmCruiseSpeed and CS.cruiseState.speed > 0:
-        self.v_cruise_kph = float(np.clip(CS.cruiseState.speed * CV.MS_TO_KPH, self.v_cruise_min, V_CRUISE_MAX))
-        self.v_cruise_cluster_kph = self.v_cruise_kph
       return
 
     initial_experimental_mode = experimental_mode and not dynamic_experimental_control

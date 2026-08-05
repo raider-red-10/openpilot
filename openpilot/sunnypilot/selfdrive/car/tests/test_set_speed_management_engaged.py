@@ -75,31 +75,61 @@ class TestVCruiseSeeding(unittest.TestCase):
     h.get_minimum_set_speed(is_metric=False)
     return h
 
-  def car_state(self, set_speed_mph):
+  def car_state(self, set_speed_mph, engaged=True):
     from openpilot.common.constants import CV
     CS = car.CarState.new_message()
     CS.cruiseState.speed = set_speed_mph * CV.MPH_TO_MS
+    CS.cruiseState.enabled = engaged
     return CS
 
-  def test_seeds_from_the_car_when_icbm_owns_the_set_speed(self):
+  def mph(self, kph):
     from openpilot.common.constants import CV
+    return kph * CV.KPH_TO_MS * CV.MS_TO_MPH
+
+  def test_seeds_from_the_car_when_icbm_owns_the_set_speed(self):
     h = self.helper(pcm_cruise=True, pcm_cruise_speed=False)
-    h.initialize_v_cruise(self.car_state(45), False, False)
-    self.assertAlmostEqual(h.v_cruise_kph * CV.KPH_TO_MS * CV.MS_TO_MPH, 45, delta=0.6)
+    h._seed_v_cruise_from_car(self.car_state(45, engaged=True))
+    self.assertAlmostEqual(self.mph(h.v_cruise_kph), 45, delta=0.6)
     self.assertEqual(h.v_cruise_kph, h.v_cruise_cluster_kph)
+
+  def test_reproduces_the_unseeded_failure(self):
+    """Without seeding, v_cruise sits at UNSET and gets clipped to max -- measured on the
+    vehicle as carSet=20 / opSet=90, with ICBM holding btn=increase the whole drive."""
+    from openpilot.selfdrive.car.cruise import V_CRUISE_UNSET, V_CRUISE_MAX
+    h = self.helper(pcm_cruise=True, pcm_cruise_speed=False)
+    self.assertEqual(h.v_cruise_kph, V_CRUISE_UNSET)
+    self.assertAlmostEqual(self.mph(V_CRUISE_MAX), 90, delta=0.5)
+
+    h._seed_v_cruise_from_car(self.car_state(20, engaged=True))
+    self.assertAlmostEqual(self.mph(h.v_cruise_kph), 20, delta=0.6)
+
+  def test_seeds_only_once_then_openpilot_leads(self):
+    # After seeding, openpilot's target is its own -- the car must not keep overwriting it
+    h = self.helper(pcm_cruise=True, pcm_cruise_speed=False)
+    h._seed_v_cruise_from_car(self.car_state(45, engaged=True))
+    h.v_cruise_kph = 100.0
+    h._seed_v_cruise_from_car(self.car_state(45, engaged=True))
+    self.assertEqual(h.v_cruise_kph, 100.0)
+
+  def test_re_arms_after_cruise_disengages(self):
+    h = self.helper(pcm_cruise=True, pcm_cruise_speed=False)
+    h._seed_v_cruise_from_car(self.car_state(45, engaged=True))
+    h._seed_v_cruise_from_car(self.car_state(0, engaged=False))
+    h._seed_v_cruise_from_car(self.car_state(30, engaged=True))
+    self.assertAlmostEqual(self.mph(h.v_cruise_kph), 30, delta=0.6)
 
   def test_pcm_car_without_icbm_is_untouched(self):
     # Stock behaviour: the PCM owns the set speed, openpilot must not invent one
     h = self.helper(pcm_cruise=True, pcm_cruise_speed=True)
     before = h.v_cruise_kph
-    h.initialize_v_cruise(self.car_state(45), False, False)
+    h._seed_v_cruise_from_car(self.car_state(45, engaged=True))
     self.assertEqual(h.v_cruise_kph, before)
 
   def test_ignores_a_car_reporting_no_set_speed(self):
-    # Cruise off reports 0 (or 255 unset) -- seeding from that would be worse than not seeding
+    # Engaged but no set speed yet -- seeding from that is worse than not seeding
     h = self.helper(pcm_cruise=True, pcm_cruise_speed=False)
     before = h.v_cruise_kph
-    h.initialize_v_cruise(self.car_state(0), False, False)
+    h._seed_v_cruise_from_car(self.car_state(0, engaged=True))
     self.assertEqual(h.v_cruise_kph, before)
 
 

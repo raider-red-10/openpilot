@@ -81,10 +81,19 @@ def main():
     ]
     line = "  ".join(fields)
 
+    # Change detection ignores speed and set point. vEgo dithers around 0.0/-0.0 when
+    # parked and drifts constantly when moving, so including them means every sample
+    # counts as a change and the interesting transitions scroll away.
+    key = (round(sm["carStateSP"].speedLimit, 1), round(mapd.speedLimit, 1), int(mapd.speedLimitValid),
+           round(sl.resolver.speedLimit, 1), round(sl.resolver.speedLimitFinal, 1),
+           int(sl.resolver.speedLimitValid), str(sl.resolver.source),
+           str(sl.assist.state), int(sl.assist.enabled), int(sl.assist.active),
+           str(icbm.state), str(icbm.sendButton), int(cs.cruiseState.enabled))
+
     now = time.monotonic()
-    if line != last_line or (now - last_emit) > HEARTBEAT:
+    if key != last_line or (now - last_emit) > HEARTBEAT:
       print(f"{now - start:7.1f}s  {line}", file=out, flush=True)
-      last_line, last_emit = line, now
+      last_line, last_emit = key, now
 
 
 if __name__ == "__main__":

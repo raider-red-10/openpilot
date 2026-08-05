@@ -178,7 +178,16 @@ class Controls(ControlsExt):
       CC.angularVelocity = self.calibrated_pose.angular_velocity.xyz.tolist()
 
     CC.cruiseControl.override = CC.enabled and not CC.longActive and (self.CP.openpilotLongitudinalControl or not self.CP_SP.pcmCruiseSpeed)
-    CC.cruiseControl.cancel = CS.cruiseState.enabled and (not CC.enabled or not self.CP.pcmCruise)
+    # In MADS lateral-only operation openpilot steers while the main engaged state stays False
+    # by design. Without this guard the line below concludes "the car's cruise is on but we are
+    # not engaged, so cancel it" and holds cancel true for as long as lateral is active. On cars
+    # that cancel via an SCC message rather than a button (CANFD_ALT_BUTTONS) that is sent
+    # continuously, which fights the car's ACC and surfaces as "Smart Cruise Control conditions
+    # not met" plus repeated engage/disengage. openpilot is not taking over longitudinal here,
+    # so it has no reason to shut the car's own cruise off.
+    mads_lateral_only = CC.latActive and not CC.enabled and not self.CP.openpilotLongitudinalControl
+    CC.cruiseControl.cancel = CS.cruiseState.enabled and (not CC.enabled or not self.CP.pcmCruise) and \
+                              not mads_lateral_only
     CC.cruiseControl.resume = CC.enabled and CS.cruiseState.standstill and not self.sm['longitudinalPlan'].shouldStop
 
     hudControl = CC.hudControl

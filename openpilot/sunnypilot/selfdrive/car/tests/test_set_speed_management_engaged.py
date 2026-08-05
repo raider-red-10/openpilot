@@ -1,6 +1,7 @@
 import unittest
 
 from opendbc.car import structs
+from opendbc.car.structs import car
 from openpilot.cereal import custom
 from openpilot.sunnypilot.selfdrive.car.cruise_helpers import set_speed_management_engaged
 
@@ -57,6 +58,49 @@ class TestSetSpeedManagementEngaged(unittest.TestCase):
         if set_speed_management_engaged(CP, CP_SP, False, True):
           changed.add((op_long, pcm))
     self.assertEqual(changed, {(False, False)})
+
+
+class TestVCruiseSeeding(unittest.TestCase):
+  """openpilot's set speed has to start from the car's when ICBM owns it. Left unseeded it sits
+  at V_CRUISE_UNSET, Speed Limit Assist compares its target against that and never confirms."""
+
+  def helper(self, pcm_cruise: bool, pcm_cruise_speed: bool):
+    from openpilot.selfdrive.car.cruise import VCruiseHelper
+    CP = structs.CarParams()
+    CP.pcmCruise = pcm_cruise
+    CP.openpilotLongitudinalControl = False
+    CP_SP = structs.CarParamsSP()
+    CP_SP.pcmCruiseSpeed = pcm_cruise_speed
+    h = VCruiseHelper(CP, CP_SP)
+    h.get_minimum_set_speed(is_metric=False)
+    return h
+
+  def car_state(self, set_speed_mph):
+    from openpilot.common.constants import CV
+    CS = car.CarState.new_message()
+    CS.cruiseState.speed = set_speed_mph * CV.MPH_TO_MS
+    return CS
+
+  def test_seeds_from_the_car_when_icbm_owns_the_set_speed(self):
+    from openpilot.common.constants import CV
+    h = self.helper(pcm_cruise=True, pcm_cruise_speed=False)
+    h.initialize_v_cruise(self.car_state(45), False, False)
+    self.assertAlmostEqual(h.v_cruise_kph * CV.KPH_TO_MS * CV.MS_TO_MPH, 45, delta=0.6)
+    self.assertEqual(h.v_cruise_kph, h.v_cruise_cluster_kph)
+
+  def test_pcm_car_without_icbm_is_untouched(self):
+    # Stock behaviour: the PCM owns the set speed, openpilot must not invent one
+    h = self.helper(pcm_cruise=True, pcm_cruise_speed=True)
+    before = h.v_cruise_kph
+    h.initialize_v_cruise(self.car_state(45), False, False)
+    self.assertEqual(h.v_cruise_kph, before)
+
+  def test_ignores_a_car_reporting_no_set_speed(self):
+    # Cruise off reports 0 (or 255 unset) -- seeding from that would be worse than not seeding
+    h = self.helper(pcm_cruise=True, pcm_cruise_speed=False)
+    before = h.v_cruise_kph
+    h.initialize_v_cruise(self.car_state(0), False, False)
+    self.assertEqual(h.v_cruise_kph, before)
 
 
 if __name__ == "__main__":

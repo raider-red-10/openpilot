@@ -141,6 +141,13 @@ class VCruiseHelper(VCruiseHelperSP):
   def initialize_v_cruise(self, CS, experimental_mode: bool, dynamic_experimental_control: bool) -> None:
     # initializing is handled by the PCM
     if self.CP.pcmCruise:
+      # ...unless ICBM owns the set speed. Then openpilot tracks its own target and ICBM presses
+      # buttons to walk the car to it, so it has to start from what the car is actually set to.
+      # Left unseeded it stays at V_CRUISE_UNSET, Speed Limit Assist compares its target against
+      # that, never confirms, and ICBM chases a speed the driver never asked for.
+      if not self.CP_SP.pcmCruiseSpeed and CS.cruiseState.speed > 0:
+        self.v_cruise_kph = float(np.clip(CS.cruiseState.speed * CV.MS_TO_KPH, self.v_cruise_min, V_CRUISE_MAX))
+        self.v_cruise_cluster_kph = self.v_cruise_kph
       return
 
     initial_experimental_mode = experimental_mode and not dynamic_experimental_control

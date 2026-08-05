@@ -207,6 +207,24 @@ class TestSpeedLimitAssistChain(unittest.TestCase):
     c.step(n=500)
     self.assertEqual(c.car_set_mph, settled, "set speed kept moving after reaching the target")
 
+  def test_recovers_when_the_car_reports_engaged_before_its_set_speed(self):
+    """Why the Sorento worked and the Palisade did not.
+
+    Both take the same branch. On a car where openpilot engages normally, _enabled lags
+    engagement by a few frames while the SET button is released, and during that gap the
+    mirror branch copies the car's set speed into openpilot's -- it self-seeds by timing.
+    Driving `enabled` from the car's own cruise removes that gap, so if the SCC reports
+    engaged before it reports a set speed, openpilot mirrors 0 -> V_CRUISE_UNSET and is
+    stuck there, which is what ICBM then chases.
+    """
+    c = Chain()
+    c.car.set_speed_mph = 0.0        # engaged, set speed not populated yet
+    c.step(n=30)
+    c.car.set_speed_mph = 20.0       # SCC catches up
+    c.step(n=50)
+    self.assertEqual(c.op_set_mph, START_SET_MPH,
+                     f"openpilot never adopted the car's set speed: {c.op_set_mph}")
+
   def test_never_targets_max_speed(self):
     """The measured failure: opSet pinned at 90 mph (V_CRUISE_MAX) with btn=increase held."""
     c = Chain()

@@ -24,6 +24,7 @@ from openpilot.selfdrive.car.helpers import convert_carControlSP, convert_to_cap
 
 from openpilot.sunnypilot.mads.helpers import set_alternative_experience, set_car_specific_params
 from openpilot.sunnypilot.selfdrive.car import interfaces as sunnypilot_interfaces
+from openpilot.sunnypilot.selfdrive.car.cruise_helpers import set_speed_management_engaged
 
 REPLAY = "REPLAY" in os.environ
 
@@ -214,7 +215,13 @@ class Car:
       self.can_log_mono_time = messaging.log_from_bytes(can_strs[0]).logMonoTime
 
     self.v_cruise_helper.update_speed_limit_assist(self.is_metric, self.sm['longitudinalPlanSP'])
-    self.v_cruise_helper.update_v_cruise(CS, self.sm['carControl'].enabled, self.is_metric)
+    # Speed Limit Assist confirms by jumping the set speed straight to the limit, which lives on
+    # the non-PCM branch of update_v_cruise. That branch is gated on openpilot being enabled, so
+    # on a MADS car -- where `enabled` never goes true while lateral is engaged -- the jump never
+    # runs and a confirm press falls through to a plain +1. See set_speed_management_engaged.
+    v_cruise_enabled = set_speed_management_engaged(self.CP, self.CP_SP, self.sm['carControl'].enabled,
+                                                    CS.cruiseState.enabled)
+    self.v_cruise_helper.update_v_cruise(CS, v_cruise_enabled, self.is_metric)
     if self.sm['carControl'].enabled and not self.CC_prev.enabled:
       # Use CarState w/ buttons from the step selfdrived enables on
       self.v_cruise_helper.initialize_v_cruise(self.CS_prev, self.experimental_mode, self.dynamic_experimental_control)

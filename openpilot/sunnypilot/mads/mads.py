@@ -35,6 +35,7 @@ class ModularAssistiveDrivingSystem:
     self.available = False
     self.lateral_mismatch_counter = 0
     self.allow_always = False
+    self.lkas_button_disable_only = False
     self.no_main_cruise = False
     self.selfdrive = selfdrive
     self.selfdrive.enabled_prev = False
@@ -45,6 +46,19 @@ class ModularAssistiveDrivingSystem:
     if self.CP.brand == "hyundai":
       if self.CP.flags & (HyundaiFlags.HAS_LDA_BUTTON | HyundaiFlags.CANFD):
         self.allow_always = True
+      # CCNC angle-steering cars: the MDPS rejects an angle command unless the car's own
+      # ADAS was armed, which happens on ACC engagement and not on an LFA button press.
+      # Engaging lateral from the button makes the MDPS fault (MDPS_LkaFailSta /
+      # MDPS_ADAS_AciFltSig_Lv2), latActive drops, re-engages, and flaps at ~2Hz until it
+      # gives up with a takeover alert. Measured on a 2026 Palisade Hybrid (LX3): the
+      # camera's own LFA_ALT while steering is byte-equivalent to what openpilot sends
+      # (ADAS_ActvACISta=0, Lvl2Sta=2), so there is no arming field we can set -- the
+      # difference is car state with no CAN signature.
+      #
+      # Disengaging commands no steering, so the button is safe in that direction. Honor
+      # it to turn lateral off; engagement stays on main cruise, which arms the ADAS.
+      if (self.CP.flags & HyundaiFlags.CCNC) and (self.CP.flags & HyundaiFlags.CANFD_ANGLE_STEERING):
+        self.lkas_button_disable_only = True
     if self.CP.brand == "tesla":
       self.allow_always = True
 
@@ -177,7 +191,7 @@ class ModularAssistiveDrivingSystem:
             self.events_sp.add(EventNameSP.manualSteeringRequired)
           else:
             self.events_sp.add(EventNameSP.lkasDisable)
-        else:
+        elif not self.lkas_button_disable_only:
           self.events_sp.add(EventNameSP.lkasEnable)
 
     if not CS.cruiseState.available and not self.no_main_cruise:

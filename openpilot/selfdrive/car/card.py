@@ -81,6 +81,7 @@ class Car:
     self.CS_prev = car.CarState.new_message()
     self.CS_SP_prev = custom.CarStateSP.new_message()
     self.initialized_prev = False
+    self.v_cruise_enabled_prev = False
 
     self.last_actuators_output = structs.CarControl.Actuators()
 
@@ -222,9 +223,13 @@ class Car:
     v_cruise_enabled = set_speed_management_engaged(self.CP, self.CP_SP, self.sm['carControl'].enabled,
                                                     CS.cruiseState.enabled)
     self.v_cruise_helper.update_v_cruise(CS, v_cruise_enabled, self.is_metric)
-    if self.sm['carControl'].enabled and not self.CC_prev.enabled:
+    # Seed on the same signal that drives update_v_cruise. Taking the non-PCM branch without
+    # initializing leaves openpilot's set speed unseeded from the car's, so Speed Limit Assist
+    # compares its target against a meaningless number and never confirms.
+    if v_cruise_enabled and not self.v_cruise_enabled_prev:
       # Use CarState w/ buttons from the step selfdrived enables on
       self.v_cruise_helper.initialize_v_cruise(self.CS_prev, self.experimental_mode, self.dynamic_experimental_control)
+    self.v_cruise_enabled_prev = v_cruise_enabled
 
     # TODO: mirror the carState.cruiseState struct?
     CS.vCruise = float(self.v_cruise_helper.v_cruise_kph)

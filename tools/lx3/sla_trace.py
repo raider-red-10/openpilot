@@ -68,7 +68,9 @@ def main():
 
     fields = [
       f"v={cs.vEgo * 2.237:5.1f}mph",
-      f"set={cs.cruiseState.speedCluster * 2.237:5.1f}",
+      f"carSet={cs.cruiseState.speedCluster * 2.237:5.1f}",
+      # openpilot's own set speed -- what SLA compares against, not the car's
+      f"opSet={cs.vCruiseCluster * 0.621:5.1f}",
       f"carCruise={int(cs.cruiseState.enabled)}",
       f"ccEnabled={int(cc.enabled)}",
       f"lat={int(cc.latActive)}",
@@ -95,7 +97,7 @@ def main():
     # Change detection ignores speed and set point. vEgo dithers around 0.0/-0.0 when
     # parked and drifts constantly when moving, so including them means every sample
     # counts as a change and the interesting transitions scroll away.
-    key = (round(sm["carStateSP"].speedLimit, 1), round(mapd.speedLimit, 1), int(mapd.speedLimitValid),
+    key = (round(cs.vCruiseCluster, 0), round(sm["carStateSP"].speedLimit, 1), round(mapd.speedLimit, 1), int(mapd.speedLimitValid),
            round(sl.resolver.speedLimit, 1), round(sl.resolver.speedLimitFinal, 1),
            int(sl.resolver.speedLimitValid), str(sl.resolver.source),
            str(sl.assist.state), int(sl.assist.enabled), int(sl.assist.active),

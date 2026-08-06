@@ -8,6 +8,7 @@
 """
 import gzip
 import struct
+import zlib
 import sys
 from collections import Counter, defaultdict
 
@@ -16,9 +17,27 @@ REC = struct.Struct("<fBIB")
 
 
 def read(path=None):
-  # resolved at call time so IN can be overridden
-  with gzip.open(path or IN, "rb") as f:
-    blob = f.read()
+  # resolved at call time so IN can be overridden.
+  # Decompress incrementally and keep whatever survives: a capture killed with SIGTERM never
+  # gets its gzip footer, and gzip.read() throws away the entire file over a missing trailer.
+  blob = b""
+  try:
+    with gzip.open(path or IN, "rb") as f:
+      blob = f.read()
+  except (EOFError, OSError):
+    d = zlib.decompressobj(16 + zlib.MAX_WBITS)
+    chunks = []
+    with open(path or IN, "rb") as raw:
+      while True:
+        piece = raw.read(1 << 20)
+        if not piece:
+          break
+        try:
+          chunks.append(d.decompress(piece))
+        except zlib.error:
+          break
+    blob = b"".join(chunks)
+    print(f"note: capture was truncated, recovered {len(blob) / 1e6:.1f} MB", file=sys.stderr)
   i, n = 0, len(blob)
   while i + REC.size <= n:
     t, src, addr, ln = REC.unpack_from(blob, i)

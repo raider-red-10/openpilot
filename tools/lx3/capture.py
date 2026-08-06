@@ -11,6 +11,7 @@ openpilot asks the panda to send -- so any question can be answered afterwards f
 Writes /data/lx3_capture.bin.gz. Roughly 1 MB per minute compressed.
 """
 import gzip
+import signal
 import struct
 import sys
 import time
@@ -23,6 +24,10 @@ REC = struct.Struct("<fBIB")
 
 
 def main():
+  # pkill sends SIGTERM, which would kill us mid-stream and leave the gzip without its footer.
+  # Turn it into KeyboardInterrupt so the file closes cleanly.
+  signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(KeyboardInterrupt()))
+
   limit = float(sys.argv[1]) if len(sys.argv) > 1 else None
   can = messaging.sub_sock("can", conflate=False, timeout=1000)
   send = messaging.sub_sock("sendcan", conflate=False, timeout=1000)

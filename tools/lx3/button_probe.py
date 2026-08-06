@@ -8,7 +8,9 @@ break is visible:
   RAW   the CRUISE_BUTTONS field in the message the car actually sends
   EVENT what openpilot turned that into (carState.buttonEvents)
 
-Works parked -- the buttons transmit whether or not cruise is engaged.
+Some cars only transmit button codes while cruise main is armed, so if nothing appears,
+press the CRUISE main button first and try again. The heartbeat distinguishes "message never
+arrives" from "message arrives but the field is always zero" -- those need different fixes.
 
   1=RES/+  2=SET/-  4=CANCEL
 """
@@ -35,16 +37,21 @@ def main():
   print("press RES/+ and SET/- a few times each. ctrl-c to stop.\n", file=sys.stderr)
   start = time.monotonic()
   last_raw = {}
-  seen_addr = set()
+  counts = {}        # (bus, addr) -> frames seen
+  nonzero = {}       # (bus, addr) -> frames with a nonzero button field
+  last_beat = 0.0
+  avail = enabled = False
 
   while True:
     for msg in messaging.drain_sock(can):
       for c in msg.can:
         if c.address not in (ALT, STD) or c.src >= 128:
           continue
-        seen_addr.add((c.src, c.address))
         b = raw_button(c.address, c.dat)
         key = (c.src, c.address)
+        counts[key] = counts.get(key, 0) + 1
+        if b:
+          nonzero[key] = nonzero.get(key, 0) + 1
         if last_raw.get(key) != b:
           last_raw[key] = b
           if b != 0:
@@ -53,8 +60,18 @@ def main():
 
     sm.update(0)
     if sm.updated["carState"]:
+      avail = sm["carState"].cruiseState.available
+      enabled = sm["carState"].cruiseState.enabled
       for be in sm["carState"].buttonEvents:
         print(f"{time.monotonic() - start:7.2f}  EVENT  type={be.type} pressed={be.pressed}", flush=True)
+
+    now = time.monotonic()
+    if now - last_beat > 5.0:
+      last_beat = now
+      seen = ", ".join(f"bus{b}/0x{a:03x}: {n} frames, {nonzero.get((b, a), 0)} nonzero"
+                       for (b, a), n in sorted(counts.items())) or "NO 0x1aa OR 0x1cf SEEN AT ALL"
+      print(f"{now - start:7.2f}  ..  cruiseAvail={int(avail)} cruiseOn={int(enabled)}  {seen}",
+            flush=True)
 
     time.sleep(0.002)
 

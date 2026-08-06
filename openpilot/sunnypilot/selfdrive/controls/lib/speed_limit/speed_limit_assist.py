@@ -15,7 +15,6 @@ from openpilot.selfdrive.controls.lib.drive_helpers import CONTROL_N
 from openpilot.selfdrive.modeld.constants import ModelConstants
 from openpilot.sunnypilot import PARAMS_UPDATE_PERIOD
 from openpilot.sunnypilot.selfdrive.selfdrived.events import EventsSP
-from openpilot.sunnypilot.selfdrive.car.lx3_debug import dlog
 from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit import PCM_LONG_REQUIRED_MAX_SET_SPEED, CONFIRM_SPEED_THRESHOLD
 from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit.common import Mode
 from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit.helpers import compare_cluster_target, set_speed_limit_assist_availability
@@ -152,7 +151,6 @@ class SpeedLimitAssist:
     self._last_carstate_ts = now
 
     for b in CS.buttonEvents:
-      dlog("sla.btnEvent", dedupe=False, type=str(b.type), pressed=int(b.pressed))
       if not b.pressed:
         if b.type in CRUISE_BUTTONS_PLUS:
           self._plus_hold = max(self._plus_hold, now + CRUISE_BUTTON_CONFIRM_HOLD)
@@ -226,19 +224,13 @@ class SpeedLimitAssist:
 
   def _update_non_pcm_long_confirmed_state(self) -> bool:
     if self.target_set_speed_confirmed:
-      dlog("sla.confirm", how="set speed already equals target")
       return True
 
     if self.state != SpeedLimitAssistState.preActive:
       return False
 
     req_plus, req_minus = compare_cluster_target(self.v_cruise_cluster, self._speed_limit_final_last, self.is_metric)
-    released = self._get_button_release(req_plus, req_minus)
-    dlog("sla.confirmChk", opCruiseMph=round(self.v_cruise_cluster * 2.237, 1),
-         targetMph=round(self._speed_limit_final_last * 2.237, 1),
-         reqPlus=int(req_plus), reqMinus=int(req_minus), released=int(released),
-         plusHold=round(self._plus_hold, 2), minusHold=round(self._minus_hold, 2))
-    return released
+    return self._get_button_release(req_plus, req_minus)
 
   def update_state_machine_pcm_op_long(self):
     self.long_engaged_timer = max(0, self.long_engaged_timer - 1)
@@ -306,9 +298,6 @@ class SpeedLimitAssist:
           else:
             self.state = SpeedLimitAssistState.pending
 
-    dlog("sla.state", state=str(self.state), longEnabled=int(self.long_enabled),
-         enabled=int(self.enabled), hasLimit=int(self._has_speed_limit),
-         outTargetMph=round(self.output_v_target * 2.237, 1))
     enabled = self.state in ENABLED_STATES
     active = self.state in ACTIVE_STATES
 

@@ -12,7 +12,6 @@ from openpilot.common.realtime import DT_CTRL
 from openpilot.sunnypilot.selfdrive.car.intelligent_cruise_button_management.helpers import get_minimum_set_speed
 from openpilot.sunnypilot.selfdrive.car.cruise_ext import CRUISE_BUTTON_TIMER, update_manual_button_timers
 from openpilot.sunnypilot.selfdrive.car.cruise_helpers import set_speed_management_engaged
-from openpilot.sunnypilot.selfdrive.car.lx3_debug import dlog
 
 LongitudinalPlanSource = custom.LongitudinalPlanSP.LongitudinalPlanSource
 State = custom.IntelligentCruiseButtonManagement.IntelligentCruiseButtonManagementState
@@ -127,8 +126,5 @@ class IntelligentCruiseButtonManagement:
     self.update_readiness(CS, CC)
 
     self.cruise_button = self.update_state_machine()
-
-    dlog("icbm", vTargetMph=self.v_target, carSetMph=self.v_cruise_cluster, minMph=self.v_cruise_min,
-         ready=int(self.is_ready), state=str(self.state), button=str(self.cruise_button))
 
     self.is_ready_prev = self.is_ready

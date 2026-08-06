@@ -153,17 +153,31 @@ def main():
     r = results[name]
     print(f"  {len(r['seen'])} messages, {sum(r['seen'].values())} frames", flush=True)
 
+  # Persist the capture before analysing. A crash in the analysis must never cost a re-run.
+  try:
+    import json
+    raw = {ph: {"changed": {f"{b}:{a}": v for (b, a), v in r["changed"].items()},
+                "seen": {f"{b}:{a}": v for (b, a), v in r["seen"].items()},
+                "edges": {f"{b}:{a}": v for (b, a), v in r["edges"].items()},
+                "secs": r["secs"]} for ph, r in results.items()}
+    raw["_width"] = {f"{b}:{a}": v for (b, a), v in WIDTH.items()}
+    with open(OUT + ".raw.json", "w") as f:
+      json.dump(raw, f)
+    print(f"raw capture saved to {OUT}.raw.json", flush=True)
+  except Exception as e:
+    print(f"could not save raw capture: {e}", flush=True)
+
   cands = find_candidates(results)
 
   lines = []
-  paired = sorted(set(cands["left"]) & set(cands["right"]))
+  paired = sorted(set(cands["plus"]) & set(cands["minus"]))
   lines.append(f"PAIRED -- changes for both buttons, static when idle ({len(paired)} messages)")
   for k in paired:
     bus, addr = k
     w = WIDTH.get(k, 8)
-    lb = [f"byte={b // 8} bit={b % 8}" for b in bits(cands["left"][k], w)]
-    rb = [f"byte={b // 8} bit={b % 8}" for b in bits(cands["right"][k], w)]
-    rate = results["left"]["edges"][k] / results["left"]["secs"]
+    lb = [f"byte={b // 8} bit={b % 8}" for b in bits(cands["plus"][k], w)]
+    rb = [f"byte={b // 8} bit={b % 8}" for b in bits(cands["minus"][k], w)]
+    rate = results["plus"]["edges"][k] / results["plus"]["secs"]
     lines.append(f"  bus={bus} addr=0x{addr:03x}  PLUS[{', '.join(lb)}]  MINUS[{', '.join(rb)}]"
                  f"   ~{rate:.1f} changes/s")
 

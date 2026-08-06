@@ -96,6 +96,55 @@ def diff(addr_hex, byte_i):
     print(f"  {' '.join(f'{b:02x}' for b in f)}")
 
 
+def press(addr_hex="0x10b", byte_i=10):
+  """Every real press: how long the bit is held, how many frames, and the counter across it.
+
+  Knowing a press is only byte 10 is not enough to replicate one. What matters is the shape --
+  consecutive frames, duration, and whether the counter keeps its natural sequence while the
+  button is held.
+  """
+  want, bi = int(addr_hex, 0), int(byte_i)
+  frames = [(t, dat) for t, src, addr, dat in read()
+            if addr == want and src < 128 and len(dat) > bi]
+  if not frames:
+    print("no frames")
+    return
+
+  runs, cur = [], []
+  for t, dat in frames:
+    if dat[bi]:
+      cur.append((t, dat))
+    elif cur:
+      runs.append(cur)
+      cur = []
+  if cur:
+    runs.append(cur)
+
+  names = {1: "+", 2: "-", 4: "resume", 8: "?0x08", 128: "LFA"}
+  print(f"{len(frames)} frames of 0x{want:03x}, {len(runs)} presses\n")
+  gaps = [b[0][0] - a[-1][0] for a, b in zip(runs, runs[1:])]
+  for r in runs[:14]:
+    val = r[0][1][bi]
+    dur = r[-1][0] - r[0][0]
+    ctrs = [d[2] for _, d in r]
+    steps = {b - a for a, b in zip(ctrs, ctrs[1:])}
+    print(f"  t={r[0][0]:7.2f}s  {names.get(val, hex(val)):>6}  {len(r):2d} frames  "
+          f"{dur * 1000:5.0f}ms  counter {ctrs[0]}..{ctrs[-1]} steps={sorted(steps) or ['-']}")
+  if len(runs) > 14:
+    print(f"  ... {len(runs) - 14} more")
+
+  lens = [len(r) for r in runs]
+  durs = [(r[-1][0] - r[0][0]) * 1000 for r in runs]
+  print(f"\nheld for {min(lens)}-{max(lens)} frames ({min(durs):.0f}-{max(durs):.0f}ms)")
+  if gaps:
+    print(f"gap between presses: {min(gaps) * 1000:.0f}-{max(gaps) * 1000:.0f}ms")
+
+  # what the counter does when nothing is pressed, for comparison
+  idle_ctrs = [dat[2] for _, dat in frames[:200] if not dat[bi]]
+  idle_steps = {(b - a) % 256 for a, b in zip(idle_ctrs, idle_ctrs[1:])}
+  print(f"idle counter steps: {sorted(idle_steps)}")
+
+
 def tx():
   asked = Counter()
   went = Counter()
@@ -125,5 +174,7 @@ if __name__ == "__main__":
     diff(args[1], args[2])
   elif cmd == "tx":
     tx()
+  elif cmd == "press":
+    press(*args[1:])
   else:
     print(__doc__)

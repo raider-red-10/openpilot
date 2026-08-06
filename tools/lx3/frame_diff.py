@@ -23,7 +23,7 @@ ADDR = 0x10B
 IGNORE = (0, 1, 2)   # bytes 0-1 checksum, byte 2 counter -- expected to differ every frame
 BTN_BYTE = 10
 BTN_MASK = 0x87      # bit 0 +, bit 1 -, bit 2 resume, bit 7 LFA
-SECONDS = 30
+SECONDS = 45
 
 
 def hexs(b):
@@ -35,9 +35,12 @@ def main():
   idle = Counter()
   pressed = {}
 
-  print(f"capturing {SECONDS}s -- press + a few times, then -, with pauses between",
+  print(f"capturing {SECONDS}s -- press + a few times, then -, then resume", file=sys.stderr)
+  print("each press should print a line below; if nothing prints, the press is not reaching us\n",
         file=sys.stderr)
-  end = time.monotonic() + SECONDS
+  start = time.monotonic()
+  end = start + SECONDS
+  last_btn = 0
   while time.monotonic() < end:
     for msg in messaging.drain_sock(sock):
       for c in msg.can:
@@ -45,8 +48,14 @@ def main():
           continue
         dat = bytes(c.dat)
         key = tuple(v for i, v in enumerate(dat) if i not in IGNORE)
-        if dat[BTN_BYTE] & BTN_MASK:
-          pressed.setdefault(dat[BTN_BYTE] & BTN_MASK, []).append(dat)
+        btn = dat[BTN_BYTE] & BTN_MASK
+        if btn != last_btn:
+          last_btn = btn
+          if btn:
+            name = {1: "+", 2: "-", 4: "resume", 128: "LFA"}.get(btn, hex(btn))
+            print(f"  {time.monotonic() - start:5.1f}s  press: {name}", flush=True)
+        if btn:
+          pressed.setdefault(btn, []).append(dat)
         else:
           idle[key] += 1
     time.sleep(0.002)

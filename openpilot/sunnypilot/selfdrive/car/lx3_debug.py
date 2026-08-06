@@ -22,14 +22,30 @@ _OUT_PATH = "/data/lx3_debug.txt"
 _enabled = os.path.exists(_ENABLE_FLAG)
 _fh = None
 _last = {}
+_checked = 0.0
 _t0 = time.monotonic()
 
 
 def _handle():
-  global _fh
+  """Reopen if the file was deleted underneath us.
+
+  Deleting the log mid-run used to leave every process writing to a dead inode, so the file
+  silently never came back and a drive's worth of data went nowhere.
+  """
+  global _fh, _checked
+  now = time.monotonic()
+  if _fh is not None and now - _checked > 2.0:
+    _checked = now
+    if not os.path.exists(_OUT_PATH):
+      try:
+        _fh.close()
+      except Exception:
+        pass
+      _fh = None
   if _fh is None:
     # Each process opens append; lines are single writes so they interleave without tearing
     _fh = open(_OUT_PATH, "a", buffering=1)
+    _checked = now
   return _fh
 
 

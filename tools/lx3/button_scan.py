@@ -109,6 +109,26 @@ def find_candidates(results):
   return cands
 
 
+def watch_byte(bus, addr, byte_i):
+  """Print the whole byte whenever it changes -- identifies several buttons in one run."""
+  sock = messaging.sub_sock("can", conflate=False, timeout=1000)
+  print(f"watching bus={bus} addr=0x{addr:03x} byte={byte_i} (whole byte) -- ctrl-c to stop")
+  print("press one button at a time and say which; each will light its own bit\n")
+  last, start = None, time.monotonic()
+  while True:
+    for msg in messaging.drain_sock(sock):
+      for c in msg.can:
+        if c.src != bus or c.address != addr or len(c.dat) <= byte_i:
+          continue
+        v = c.dat[byte_i]
+        if v != last:
+          bits_set = [i for i in range(8) if (v >> i) & 1]
+          print(f"  {time.monotonic() - start:6.2f}s  byte{byte_i}=0x{v:02x} {v:08b}  "
+                f"bits set: {bits_set}", flush=True)
+          last = v
+    time.sleep(0.002)
+
+
 def watch(bus, addr, byte_i, bit_i):
   """Print the live value of one bit. Flip the stalk and watch it track."""
   sock = messaging.sub_sock("can", conflate=False, timeout=1000)
@@ -131,6 +151,9 @@ def watch(bus, addr, byte_i, bit_i):
 def main():
   if len(sys.argv) == 5:
     watch(int(sys.argv[1], 0), int(sys.argv[2], 0), int(sys.argv[3], 0), int(sys.argv[4], 0))
+    return
+  if len(sys.argv) == 4:
+    watch_byte(int(sys.argv[1], 0), int(sys.argv[2], 0), int(sys.argv[3], 0))
     return
 
   sock = messaging.sub_sock("can", conflate=False, timeout=1000)

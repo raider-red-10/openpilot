@@ -6,6 +6,7 @@ While the roll calibration is a real value that can be estimated, here we assume
 and the image input into the neural network is not corrected for roll.
 '''
 
+import base64
 import os
 import capnp
 import numpy as np
@@ -259,20 +260,39 @@ class Calibrator:
     pm.send('liveCalibration', self.get_msg(valid))
 
 
-def invalidate_calibration_on_car_change(params: Params, CP: car.CarParams) -> None:
-  """Camera calibration is mount-specific. A device moved to a different car keeps a stale
-  mount calibration; paramsd, torqued, and lagd already discard their learned state on a
-  carFingerprint change, so do the same here."""
+def swap_calibration_on_car_change(params: Params, CP: car.CarParams) -> None:
+  """Camera calibration is car-specific. A device moved to a different car must not keep the
+  previous car's calibration -- it stays inside every validity limit while placing the car
+  wrong in the lane (measured: a 0.62 degree pitch error, no alert). paramsd, torqued, and
+  lagd discard their learned state on a carFingerprint change; calibration is archived under
+  the outgoing car's fingerprint and restored for the incoming car instead, because
+  relearning costs minutes of driving and gates engagement. Keying by exact fingerprint makes
+  cross-car contamination structurally impossible."""
   last_carparams_data = params.get("CarParamsPrevRoute")
   if last_carparams_data is None:
     return
   try:
     with car.CarParams.from_bytes(last_carparams_data) as last_CP:
-      if last_CP.carFingerprint != CP.carFingerprint:
-        cloudlog.warning(f"Car changed since last drive ({last_CP.carFingerprint} -> {CP.carFingerprint}), resetting calibration")
-        params.remove("CalibrationParams")
+      prev_fingerprint = str(last_CP.carFingerprint)
+    cur_fingerprint = str(CP.carFingerprint)
+    if prev_fingerprint == cur_fingerprint:
+      return
+
+    archive = params.get("CalibrationParamsByCar") or {}
+    outgoing = params.get("CalibrationParams")
+    if outgoing is not None:
+      archive[prev_fingerprint] = base64.b64encode(outgoing).decode()
+
+    restored = archive.get(cur_fingerprint)
+    if restored is not None:
+      params.put("CalibrationParams", base64.b64decode(restored), block=True)
+      cloudlog.warning(f"Car changed ({prev_fingerprint} -> {cur_fingerprint}), restored archived calibration")
+    else:
+      params.remove("CalibrationParams")
+      cloudlog.warning(f"Car changed ({prev_fingerprint} -> {cur_fingerprint}), no archived calibration -- relearning")
+    params.put("CalibrationParamsByCar", archive, block=True)
   except Exception:
-    cloudlog.exception("Error checking CarParamsPrevRoute for car change")
+    cloudlog.exception("Error swapping calibration on car change")
 
 
 def main() -> NoReturn:
@@ -283,7 +303,7 @@ def main() -> NoReturn:
 
   params_reader = Params()
   CP = messaging.log_from_bytes(params_reader.get("CarParams", block=True), car.CarParams)
-  invalidate_calibration_on_car_change(params_reader, CP)
+  swap_calibration_on_car_change(params_reader, CP)
 
   calibrator = Calibrator(param_put=True)
   calibrator.not_car = CP.notCar

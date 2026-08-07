@@ -113,40 +113,88 @@ class TestCalibrationd:
 
 
 class TestCalibrationCarChange:
-  """Camera calibration is mount-specific. paramsd, torqued, and lagd already discard their
-  learned state when the carFingerprint changes between drives; calibrationd must do the
-  same, or a device moved between cars drives on the previous car's mount calibration."""
+  """Camera calibration is car-specific. On a car change, calibrationd archives the outgoing
+  car's calibration under its fingerprint and restores the incoming car's if one exists -- a
+  multi-car device relearns each car once, not on every swap. paramsd, torqued, and lagd
+  already discard their learned state on a fingerprint change; calibration is archived rather
+  than discarded because relearning it costs minutes of driving and gates engagement."""
 
-  def _set_state(self, prev_fingerprint):
+  def _cal_msg(self, blocks):
+    msg = messaging.new_message('liveCalibration')
+    msg.liveCalibration.validBlocks = blocks
+    return msg.to_bytes()
+
+  def _set_state(self, prev_fingerprint, cal=None, archive=None):
     from opendbc.car.structs import car
     params = Params()
-    msg = messaging.new_message('liveCalibration')
-    msg.liveCalibration.validBlocks = 5
-    params.put("CalibrationParams", msg.to_bytes(), block=True)
+    if cal is None:
+      params.remove("CalibrationParams")
+    else:
+      params.put("CalibrationParams", cal, block=True)
+    if archive is None:
+      params.remove("CalibrationParamsByCar")
+    else:
+      params.put("CalibrationParamsByCar", archive, block=True)
     if prev_fingerprint is None:
       params.remove("CarParamsPrevRoute")
     else:
       params.put("CarParamsPrevRoute", car.CarParams(carFingerprint=prev_fingerprint).to_bytes(), block=True)
     return params
 
-  def test_reset_on_car_change(self):
+  def test_reset_and_archive_when_no_archive_for_new_car(self):
+    import base64
     from opendbc.car.structs import car
-    from openpilot.selfdrive.locationd.calibrationd import invalidate_calibration_on_car_change
-    params = self._set_state("CAR_A")
-    invalidate_calibration_on_car_change(params, car.CarParams(carFingerprint="CAR_B"))
+    from openpilot.selfdrive.locationd.calibrationd import swap_calibration_on_car_change
+    cal_a = self._cal_msg(50)
+    params = self._set_state("CAR_A", cal=cal_a)
+    swap_calibration_on_car_change(params, car.CarParams(carFingerprint="CAR_B"))
     assert params.get("CalibrationParams") is None
+    archive = params.get("CalibrationParamsByCar")
+    assert base64.b64decode(archive["CAR_A"]) == cal_a
+
+  def test_restore_from_archive(self):
+    import base64
+    from opendbc.car.structs import car
+    from openpilot.selfdrive.locationd.calibrationd import swap_calibration_on_car_change
+    cal_a, cal_b = self._cal_msg(15), self._cal_msg(50)
+    params = self._set_state("CAR_A", cal=cal_a, archive={"CAR_B": base64.b64encode(cal_b).decode()})
+    swap_calibration_on_car_change(params, car.CarParams(carFingerprint="CAR_B"))
+    assert params.get("CalibrationParams") == cal_b
+    archive = params.get("CalibrationParamsByCar")
+    assert base64.b64decode(archive["CAR_A"]) == cal_a
+
+  def test_round_trip_swap(self):
+    from opendbc.car.structs import car
+    from openpilot.selfdrive.locationd.calibrationd import swap_calibration_on_car_change
+    cal_a = self._cal_msg(50)
+    params = self._set_state("CAR_A", cal=cal_a)
+    swap_calibration_on_car_change(params, car.CarParams(carFingerprint="CAR_B"))
+    assert params.get("CalibrationParams") is None
+
+    cal_b = self._cal_msg(30)
+    params.put("CalibrationParams", cal_b, block=True)
+    params.put("CarParamsPrevRoute", car.CarParams(carFingerprint="CAR_B").to_bytes(), block=True)
+    swap_calibration_on_car_change(params, car.CarParams(carFingerprint="CAR_A"))
+    assert params.get("CalibrationParams") == cal_a
+
+    import base64
+    archive = params.get("CalibrationParamsByCar")
+    assert base64.b64decode(archive["CAR_B"]) == cal_b
+    params.remove("CarParamsPrevRoute")
+    params.remove("CalibrationParamsByCar")
 
   def test_kept_on_same_car(self):
     from opendbc.car.structs import car
-    from openpilot.selfdrive.locationd.calibrationd import invalidate_calibration_on_car_change
-    params = self._set_state("CAR_A")
-    invalidate_calibration_on_car_change(params, car.CarParams(carFingerprint="CAR_A"))
+    from openpilot.selfdrive.locationd.calibrationd import swap_calibration_on_car_change
+    params = self._set_state("CAR_A", cal=self._cal_msg(50))
+    swap_calibration_on_car_change(params, car.CarParams(carFingerprint="CAR_A"))
     assert params.get("CalibrationParams") is not None
+    assert params.get("CalibrationParamsByCar") is None
     params.remove("CarParamsPrevRoute")
 
   def test_kept_on_first_boot(self):
     from opendbc.car.structs import car
-    from openpilot.selfdrive.locationd.calibrationd import invalidate_calibration_on_car_change
-    params = self._set_state(None)
-    invalidate_calibration_on_car_change(params, car.CarParams(carFingerprint="CAR_A"))
+    from openpilot.selfdrive.locationd.calibrationd import swap_calibration_on_car_change
+    params = self._set_state(None, cal=self._cal_msg(50))
+    swap_calibration_on_car_change(params, car.CarParams(carFingerprint="CAR_A"))
     assert params.get("CalibrationParams") is not None

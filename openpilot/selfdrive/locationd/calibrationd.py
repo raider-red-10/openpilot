@@ -259,6 +259,22 @@ class Calibrator:
     pm.send('liveCalibration', self.get_msg(valid))
 
 
+def invalidate_calibration_on_car_change(params: Params, CP: car.CarParams) -> None:
+  """Camera calibration is mount-specific. A device moved to a different car keeps a stale
+  mount calibration; paramsd, torqued, and lagd already discard their learned state on a
+  carFingerprint change, so do the same here."""
+  last_carparams_data = params.get("CarParamsPrevRoute")
+  if last_carparams_data is None:
+    return
+  try:
+    with car.CarParams.from_bytes(last_carparams_data) as last_CP:
+      if last_CP.carFingerprint != CP.carFingerprint:
+        cloudlog.warning(f"Car changed since last drive ({last_CP.carFingerprint} -> {CP.carFingerprint}), resetting calibration")
+        params.remove("CalibrationParams")
+  except Exception:
+    cloudlog.exception("Error checking CarParamsPrevRoute for car change")
+
+
 def main() -> NoReturn:
   config_realtime_process([0, 1, 2, 3], 5)
 
@@ -267,6 +283,7 @@ def main() -> NoReturn:
 
   params_reader = Params()
   CP = messaging.log_from_bytes(params_reader.get("CarParams", block=True), car.CarParams)
+  invalidate_calibration_on_car_change(params_reader, CP)
 
   calibrator = Calibrator(param_put=True)
   calibrator.not_car = CP.notCar

@@ -110,3 +110,43 @@ class TestCalibrationd:
     assert c.valid_blocks == 1
     assert c.cal_status == log.LiveCalibrationData.Status.recalibrating
     np.testing.assert_allclose(c.rpy, [0.0, 0.0, MAX_ALLOWED_YAW_SPREAD*1.1], atol=1e-2)
+
+
+class TestCalibrationCarChange:
+  """Camera calibration is mount-specific. paramsd, torqued, and lagd already discard their
+  learned state when the carFingerprint changes between drives; calibrationd must do the
+  same, or a device moved between cars drives on the previous car's mount calibration."""
+
+  def _set_state(self, prev_fingerprint):
+    from opendbc.car.structs import car
+    params = Params()
+    msg = messaging.new_message('liveCalibration')
+    msg.liveCalibration.validBlocks = 5
+    params.put("CalibrationParams", msg.to_bytes(), block=True)
+    if prev_fingerprint is None:
+      params.remove("CarParamsPrevRoute")
+    else:
+      params.put("CarParamsPrevRoute", car.CarParams(carFingerprint=prev_fingerprint).to_bytes(), block=True)
+    return params
+
+  def test_reset_on_car_change(self):
+    from opendbc.car.structs import car
+    from openpilot.selfdrive.locationd.calibrationd import invalidate_calibration_on_car_change
+    params = self._set_state("CAR_A")
+    invalidate_calibration_on_car_change(params, car.CarParams(carFingerprint="CAR_B"))
+    assert params.get("CalibrationParams") is None
+
+  def test_kept_on_same_car(self):
+    from opendbc.car.structs import car
+    from openpilot.selfdrive.locationd.calibrationd import invalidate_calibration_on_car_change
+    params = self._set_state("CAR_A")
+    invalidate_calibration_on_car_change(params, car.CarParams(carFingerprint="CAR_A"))
+    assert params.get("CalibrationParams") is not None
+    params.remove("CarParamsPrevRoute")
+
+  def test_kept_on_first_boot(self):
+    from opendbc.car.structs import car
+    from openpilot.selfdrive.locationd.calibrationd import invalidate_calibration_on_car_change
+    params = self._set_state(None)
+    invalidate_calibration_on_car_change(params, car.CarParams(carFingerprint="CAR_A"))
+    assert params.get("CalibrationParams") is not None

@@ -34,6 +34,7 @@ IDENTITY_PARAMS = [
 LEARNED_PARAMS = [
   "CalibrationParams",
   "LiveParameters",
+  "LiveParametersV2",  # what paramsd actually reads; "LiveParameters" is the legacy key
   "LiveTorqueParameters",
   "LiveDelay",
   "CarBatteryCapacity",

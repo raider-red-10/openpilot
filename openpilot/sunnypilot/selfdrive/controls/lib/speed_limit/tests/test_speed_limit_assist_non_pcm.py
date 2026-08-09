@@ -14,6 +14,7 @@ from opendbc.car.structs import car
 from openpilot.common.constants import CV
 from openpilot.common.params import Params
 from openpilot.common.realtime import DT_MDL
+from openpilot.sunnypilot.selfdrive.selfdrived.button_state_tracker import ButtonStateTracker
 from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit.common import Mode
 from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit.speed_limit_assist import (
   SpeedLimitAssist, ACTIVE_STATES, DISABLED_GUARD_PERIOD, PRE_ACTIVE_GUARD_PERIOD)
@@ -28,11 +29,17 @@ TARGET = SPEED_LIMIT + OFFSET        # 34 mph -- what the set speed should becom
 START_SET_SPEED = 20 * CV.MPH_TO_MS  # where the driver's cruise is
 
 
-def button_release(button_type):
-  """A carState carrying one released button, as plannerd feeds update_car_state."""
-  CS = car.CarState.new_message()
-  CS.buttonEvents = [car.CarState.ButtonEvent(pressed=False, type=button_type)]
-  return CS
+def release_toggle(button_type):
+  """The release-toggle bitmask selfdrived publishes after one button is pressed and released.
+
+  Built with the real ButtonStateTracker so this exercises the actual carState -> bitmask ->
+  SLA path, not an assumed bit layout."""
+  tracker = ButtonStateTracker()
+  for pressed in (True, False):
+    CS = car.CarState.new_message()
+    CS.buttonEvents = [car.CarState.ButtonEvent(pressed=pressed, type=button_type)]
+    tracker.update(CS)
+  return tracker.release_toggle
 
 
 class TestSpeedLimitAssistNonPcm:
@@ -76,7 +83,7 @@ class TestSpeedLimitAssistNonPcm:
     """The whole point: one press of + while preActive must confirm."""
     assert self.reach_pre_active() == SpeedLimitAssistState.preActive
 
-    self.sla.update_car_state(button_release(ButtonType.accelCruise))
+    self.sla.update_buttons(release_toggle(ButtonType.accelCruise))
     self.step()
 
     assert self.sla.state in ACTIVE_STATES, \
@@ -85,7 +92,7 @@ class TestSpeedLimitAssistNonPcm:
   def test_wrong_direction_press_does_not_confirm(self):
     # Set speed is below the target, so only a + press is a valid confirmation
     assert self.reach_pre_active() == SpeedLimitAssistState.preActive
-    self.sla.update_car_state(button_release(ButtonType.decelCruise))
+    self.sla.update_buttons(release_toggle(ButtonType.decelCruise))
     self.step()
     assert self.sla.state not in ACTIVE_STATES
 
@@ -105,7 +112,7 @@ class TestSpeedLimitAssistNonPcm:
     """The release window is 0.5s; a press from long ago must not count."""
     import time
     assert self.reach_pre_active() == SpeedLimitAssistState.preActive
-    self.sla.update_car_state(button_release(ButtonType.accelCruise))
+    self.sla.update_buttons(release_toggle(ButtonType.accelCruise))
     self.sla._plus_hold = time.monotonic() - 1.0  # expire it
     self.step()
     assert self.sla.state not in ACTIVE_STATES

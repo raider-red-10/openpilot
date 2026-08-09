@@ -29,6 +29,7 @@ from openpilot.selfdrive.car.cruise import VCruiseHelper
 from openpilot.sunnypilot.selfdrive.car.intelligent_cruise_button_management.controller import \
   IntelligentCruiseButtonManagement
 from openpilot.sunnypilot.selfdrive.car.cruise_helpers import set_speed_management_engaged
+from openpilot.sunnypilot.selfdrive.selfdrived.button_state_tracker import ButtonStateTracker
 from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit.common import Mode
 from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit.speed_limit_assist import SpeedLimitAssist
 from openpilot.sunnypilot.selfdrive.selfdrived.events import EventsSP
@@ -90,6 +91,7 @@ class Chain:
     self.car = SimCar(set_speed_mph)
     self.v_cruise = VCruiseHelper(self.CP, self.CP_SP)
     self.sla = SpeedLimitAssist(self.CP, self.CP_SP)
+    self.button_tracker = ButtonStateTracker()
     self.icbm = IntelligentCruiseButtonManagement(self.CP, self.CP_SP)
     self.events_sp = EventsSP()
 
@@ -131,10 +133,12 @@ class Chain:
       CS.vCruise = float(self.v_cruise.v_cruise_kph)
       CS.vCruiseCluster = float(self.v_cruise.v_cruise_cluster_kph)
 
-      # --- plannerd ---
-      # update_car_state runs every iteration (polled on carState, 100Hz) so transient button
-      # releases land in the 0.5s hold window; the state machine only runs on modelV2 (20Hz).
-      self.sla.update_car_state(CS)
+      # --- selfdrived -> plannerd ---
+      # selfdrived folds button events into a release-toggle bitmask; plannerd feeds that to
+      # SLA every iteration (polled on carState, 100Hz) so transient button releases land in
+      # the 0.5s hold window. The state machine only runs on modelV2 (20Hz).
+      self.button_tracker.update(CS)
+      self.sla.update_buttons(self.button_tracker.release_toggle)
       if self.frame % PLANNER_EVERY == 0:
         self.sla.update(enabled, False, CS.vEgo, 0.0,
                         min(CS.vCruiseCluster, 145) * CV.KPH_TO_MS,
